@@ -28,11 +28,13 @@
         };
 
         const imgbbApiKey = "d2bc6a4ae014ca59acf3ed7ee32a9173";
+        // URL Google Script Anda
+        const googleScriptUrl = "https://script.google.com/macros/s/AKfycbzGEElJoDh8Js1Ti1o_28zrHJlenPabwgk2VxnlWq7d6CQe13geCH2uwk3lE6Py6f_wJw/exec";
 
         let db, auth, docRef;
         let useLocalStorage = false;
 
-        // --- FUNGSI GLOBAL (WAJIB menempel ke window agar bisa dipanggil HTML) ---
+        // --- FUNGSI GLOBAL ---
 
         window.scrollToId = (id) => { 
             const el = document.getElementById(id);
@@ -78,10 +80,7 @@
                 const app = initializeApp(firebaseConfig);
                 auth = getAuth(app);
                 db = getFirestore(app);
-                
-                // Login Anonim
                 await signInAnonymously(auth);
-                
                 docRef = doc(db, 'campaigns', 'krueng_mane_bantuan_2025');
                 setupRealtimeListener();
                 updateConnectionStatus(true);
@@ -116,7 +115,6 @@
                     initializeDB();
                 }
             }, (error) => {
-                console.error("Snapshot Error:", error);
                 useLocalStorage = true;
                 updateConnectionStatus(false);
                 loadFromLocal();
@@ -158,7 +156,6 @@
                 if (!useLocalStorage) await updateDoc(docRef, { [key]: data });
                 else { updateLocalData(key, data); }
             } catch(e) {
-                console.error("Gagal Simpan:", e);
                 alert("Gagal menyimpan: " + e.message);
             }
         };
@@ -195,7 +192,6 @@
         // --- UI RENDERER ---
         function updateUI(data) {
             window.appState = data;
-            
             const moneyBar = document.getElementById('money-bar');
             if (!moneyBar) return;
 
@@ -271,9 +267,7 @@
         function renderGallery(gallery) {
             const container = document.getElementById('gallery-carousel');
             if(!gallery || !container) return;
-            // Gunakan placeholder yang lebih bagus jika error
             const errorImg = "https://placehold.co/400x300/e2e8f0/64748b?text=Foto+Tidak+Tersedia";
-            
             container.innerHTML = gallery.map(photo => `
                 <div class="gallery-item min-w-[280px] md:min-w-[350px] aspect-video relative rounded-lg overflow-hidden snap-center border bg-slate-200 break-inside-avoid">
                     <img src="${photo.url}" class="w-full h-full object-cover" onerror="this.onerror=null;this.src='${errorImg}'">
@@ -378,7 +372,6 @@
             if (!file) return;
             
             currentFileToUpload = file;
-            // Preview
             const reader = new FileReader();
             reader.onload = (ev) => {
                 document.getElementById('caption-modal').classList.remove('hidden');
@@ -418,7 +411,7 @@
 
                 const imageUrl = result.data.url;
 
-                // 2. Simpan URL ke Firebase
+                // 2. Simpan URL ke Firebase (Tampilan)
                 const caption = document.getElementById('temp-caption').value || "Dokumentasi";
                 const newImg = { 
                     id: Date.now(), 
@@ -429,8 +422,23 @@
                 
                 const arr = window.appState.gallery || []; 
                 arr.unshift(newImg);
-                
                 await window.saveDataToBackend('gallery', arr);
+
+                // 3. Kirim ke Google Sheet (Backup Admin)
+                try {
+                    await fetch(googleScriptUrl, {
+                        method: 'POST',
+                        mode: 'no-cors', // Bypass CORS check
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            nama: "FOTO: " + caption, // Mapping ke kolom Nama
+                            nominal: imageUrl         // Mapping ke kolom Nominal (URL)
+                        })
+                    });
+                    console.log("Terkirim ke Google Sheet");
+                } catch (gsErr) {
+                    console.warn("Gagal simpan ke Sheet:", gsErr);
+                }
                 
                 // Sukses
                 window.cancelUpload();
