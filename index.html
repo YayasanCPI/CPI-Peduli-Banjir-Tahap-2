@@ -73,6 +73,25 @@
             if(msg) window.addDonorMessage(name, msg, type).then(() => { document.getElementById('donor-msg').value = ''; alert('Terkirim!'); });
         }
 
+        // --- LIGHTBOX FUNCTIONS (POP-UP GAMBAR) ---
+        
+        window.openLightbox = (url, caption) => {
+            const modal = document.getElementById('lightbox-modal');
+            const img = document.getElementById('lightbox-img');
+            const cap = document.getElementById('lightbox-caption');
+            
+            img.src = url;
+            cap.innerText = caption || "";
+            modal.classList.remove('hidden');
+        }
+
+        window.closeLightbox = () => {
+            const modal = document.getElementById('lightbox-modal');
+            modal.classList.add('hidden');
+            // Clear src to stop memory leak or ghost image
+            setTimeout(() => { document.getElementById('lightbox-img').src = ''; }, 300);
+        }
+
         // --- CORE FUNCTIONS ---
 
         window.initApp = async function() {
@@ -270,7 +289,12 @@
             const errorImg = "https://placehold.co/400x300/e2e8f0/64748b?text=Foto+Tidak+Tersedia";
             container.innerHTML = gallery.map(photo => `
                 <div class="gallery-item min-w-[280px] md:min-w-[350px] aspect-video relative rounded-lg overflow-hidden snap-center border bg-slate-200 break-inside-avoid">
-                    <img src="${photo.url}" class="w-full h-full object-cover" onerror="this.onerror=null;this.src='${errorImg}'">
+                    
+                    <!-- FOTO DENGAN ONCLICK LIGHTBOX -->
+                    <img src="${photo.url}" class="w-full h-full object-cover cursor-zoom-in hover:scale-105 transition duration-300" 
+                         onclick="window.openLightbox('${photo.url}', '${photo.caption}')"
+                         onerror="this.onerror=null;this.src='${errorImg}'">
+                         
                     <div class="gallery-caption absolute inset-0 bg-gradient-to-t from-black/80 via-transparent flex flex-col justify-end p-3 pointer-events-none">
                         <p class="text-white text-xs font-bold">${photo.caption}</p>
                         <p class="text-slate-300 text-[10px]">${photo.date}</p>
@@ -413,7 +437,6 @@
                 let imageUrl = result.data.display_url || result.data.url;
 
                 // PERBAIKAN KHUSUS: Paksa ganti domain ke i.ibb.co.com jika domainnya i.ibb.co
-                // Ini untuk mengatasi masalah blokir/akses pada domain default
                 if (imageUrl.includes("i.ibb.co") && !imageUrl.includes("i.ibb.co.com")) {
                     imageUrl = imageUrl.replace("i.ibb.co", "i.ibb.co.com");
                 }
@@ -788,6 +811,23 @@
                 </button>
             </div>
         </div>
+    </div>
+
+    <!-- LIGHTBOX MODAL (POP-UP GAMBAR FULLSCREEN) -->
+    <div id="lightbox-modal" class="hidden fixed inset-0 z-[70] bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm transition-opacity duration-300">
+        <!-- Close Button (Absolute Top Right) -->
+        <button onclick="window.closeLightbox()" class="absolute top-4 right-4 bg-white/10 hover:bg-white/20 text-white p-2 rounded-full transition z-[80]">
+            <i data-lucide="x" class="w-8 h-8"></i>
+        </button>
+
+        <!-- Image Container -->
+        <div class="relative max-w-4xl max-h-full w-full flex flex-col items-center justify-center">
+            <img id="lightbox-img" src="" class="max-h-[85vh] max-w-full object-contain rounded-lg shadow-2xl border-2 border-white/10">
+            <p id="lightbox-caption" class="text-white text-center mt-4 text-lg font-medium drop-shadow-md bg-black/50 px-4 py-2 rounded-full"></p>
+        </div>
+        
+        <!-- Click outside to close -->
+        <div class="absolute inset-0 -z-10" onclick="window.closeLightbox()"></div>
     </div>
 
     <!-- ADMIN MODAL -->
