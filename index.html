@@ -1,0 +1,775 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Program Bantuan Krueng Mane</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, onSnapshot, updateDoc, arrayUnion } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "", // Dikosongkan sesuai instruksi sistem, akan berjalan di environment ini
+            authDomain: "donasi-banjir.firebaseapp.com",
+            projectId: "donasi-banjir",
+            storageBucket: "donasi-banjir.firebasestorage.app",
+            messagingSenderId: "407787434296",
+            appId: "1:407787434296:web:85d491bab2ca3b9d4cd1cd"
+        };
+
+        let db, auth, docRef;
+        let useLocalStorage = false;
+
+        async function initApp() {
+            try {
+                const app = initializeApp(firebaseConfig);
+                auth = getAuth(app);
+                db = getFirestore(app);
+                await signInAnonymously(auth);
+                // Menggunakan ID dokumen khusus untuk Krueng Mane
+                docRef = doc(db, 'campaigns', 'krueng_mane_bantuan_2025');
+                setupRealtimeListener();
+            } catch (e) {
+                console.warn("Mode Offline aktif.", e);
+                useLocalStorage = true;
+                loadFromLocal();
+            }
+        }
+
+        function setupRealtimeListener() {
+            onSnapshot(docRef, (snapshot) => {
+                if (snapshot.exists()) {
+                    updateUI(snapshot.data());
+                } else {
+                    initializeDB();
+                }
+            }, (error) => {
+                if (!useLocalStorage) { useLocalStorage = true; loadFromLocal(); }
+            });
+        }
+
+        async function initializeDB() {
+            const initialData = {
+                targetMoney: 5000000, 
+                currentMoney: 0,
+                targetItems: 50, 
+                currentItems: 0,
+                donors: [
+                    { name: "Sistem", message: "Program Bantuan Krueng Mane Dimulai!", type: "info" }
+                ],
+                needsList: [
+                    { item: "Paket Nasi Jumat Berkah (50 Porsi)", qty: 50, unitPrice: 10000, total: 500000 },
+                    { item: "Seragam SD Ukuran 10", qty: 10, unitPrice: 125000, total: 1250000 },
+                    { item: "Seragam SD Ukuran 12", qty: 10, unitPrice: 125000, total: 1250000 },
+                    { item: "Bahan Dapur Umum (Beras/Lauk)", qty: 1, unitPrice: 500000, total: 500000 }
+                ]
+            };
+            
+            if (!useLocalStorage) {
+                await setDoc(docRef, initialData);
+            } else {
+                localStorage.setItem('krueng_mane_data', JSON.stringify(initialData));
+                updateUI(initialData);
+            }
+        }
+
+        // --- UPDATE FUNCTIONS ---
+        window.saveDataToBackend = async (key, data) => { 
+            try {
+                if (!useLocalStorage) await updateDoc(docRef, { [key]: data });
+                else { updateLocalData(key, data); }
+            } catch(e) {
+                alert("Gagal menyimpan: " + e.message);
+            }
+        };
+
+        window.addDonation = async (amount, type) => {
+            if (!useLocalStorage) {
+                if(type === 'money') {
+                    const current = window.appState.currentMoney || 0;
+                    await updateDoc(docRef, { currentMoney: current + Number(amount) });
+                } else {
+                    const current = window.appState.currentItems || 0;
+                    await updateDoc(docRef, { currentItems: current + Number(amount) });
+                }
+            } else {
+                let d = getLocal();
+                if(type === 'money') d.currentMoney += Number(amount);
+                else d.currentItems += Number(amount);
+                saveLocal(d);
+            }
+        };
+
+        window.addDonorMessage = async (name, msg, type) => {
+            const newMsg = { name, message: msg, type, date: new Date().toLocaleDateString('id-ID') };
+            if (!useLocalStorage) await updateDoc(docRef, { donors: arrayUnion(newMsg) });
+            else { let d = getLocal(); d.donors.unshift(newMsg); saveLocal(d); }
+        };
+
+        // --- LOCAL STORAGE HELPERS ---
+        function getLocal() { return JSON.parse(localStorage.getItem('krueng_mane_data')) || {}; }
+        function saveLocal(data) { localStorage.setItem('krueng_mane_data', JSON.stringify(data)); updateUI(data); }
+        function loadFromLocal() { const d = getLocal(); d.targetMoney ? updateUI(d) : initializeDB(); }
+        function updateLocalData(key, val) { const d = getLocal(); d[key] = val; saveLocal(d); }
+
+        // --- UPDATE UI CORE ---
+        function updateUI(data) {
+            window.appState = data;
+            
+            // Calculate Needs Total for Target
+            let totalNeedMoney = 0;
+            let totalNeedItems = 0;
+            if (data.needsList) {
+                data.needsList.forEach(item => {
+                    totalNeedMoney += (item.qty * item.unitPrice);
+                    // Asumsi item seragam dihitung sebagai items target
+                    if(item.item.toLowerCase().includes('seragam')) {
+                         totalNeedItems += item.qty;
+                    }
+                });
+            }
+            // Fallback jika tidak ada item spesifik
+            if (totalNeedItems === 0) totalNeedItems = data.targetItems;
+
+            // 1. Money Progress
+            const targetMoney = totalNeedMoney || data.targetMoney; 
+            const moneyPercent = Math.min((data.currentMoney / targetMoney) * 100, 100);
+            document.getElementById('money-bar').style.width = `${moneyPercent}%`;
+            document.getElementById('money-current').innerText = formatRupiah(data.currentMoney);
+            document.getElementById('money-target').innerText = formatRupiah(targetMoney);
+            document.getElementById('money-percent').innerText = `${Math.round(moneyPercent)}%`;
+
+            // 2. Items Progress
+            const targetItems = totalNeedItems;
+            const itemPercent = Math.min((data.currentItems / targetItems) * 100, 100);
+            document.getElementById('item-bar').style.width = `${itemPercent}%`;
+            document.getElementById('item-current').innerText = `${data.currentItems} Pcs`;
+            document.getElementById('item-target').innerText = `${targetItems} Pcs`;
+
+            // 3. Needs Table
+            if(data.needsList) renderNeeds(data.needsList);
+
+            // 4. Donor Feed
+            if(data.donors) renderDonors(data.donors);
+
+            // 5. Gallery
+            if(data.gallery) renderGallery(data.gallery);
+            
+            lucide.createIcons();
+        }
+
+        function renderNeeds(list) {
+            document.getElementById('needs-body').innerHTML = list.map(n => `
+                <tr class="border-b border-slate-100 hover:bg-slate-50">
+                    <td class="p-3 text-slate-700 font-medium text-xs md:text-sm">${n.item}</td>
+                    <td class="p-3 text-center text-slate-600 text-xs md:text-sm">${n.qty}</td>
+                    <td class="p-3 text-right text-slate-600 hidden sm:table-cell text-xs md:text-sm">${formatRupiah(n.unitPrice)}</td>
+                    <td class="p-3 text-right font-mono text-blue-600 text-xs md:text-sm">${formatRupiah(n.qty * n.unitPrice)}</td>
+                </tr>
+            `).join('');
+            
+            const total = list.reduce((sum, item) => sum + (item.qty * item.unitPrice), 0);
+            document.getElementById('needs-total-footer').innerText = formatRupiah(total);
+        }
+
+        function renderDonors(list) {
+            const displayList = [...list].reverse().slice(0, 10); 
+            document.getElementById('donor-feed').innerHTML = displayList.map(d => `
+                <div class="bg-white p-3 rounded-lg border border-slate-100 shadow-sm flex gap-3 items-start animate-fade-in break-inside-avoid">
+                    <div class="bg-blue-100 p-2 rounded-full text-blue-600 shrink-0">
+                        <i data-lucide="${d.type === 'money' ? 'banknote' : d.type === 'goods' ? 'shirt' : 'info'}" class="w-4 h-4"></i>
+                    </div>
+                    <div class="w-full min-w-0">
+                        <div class="flex justify-between items-center w-full">
+                            <h4 class="font-bold text-sm text-slate-800 truncate pr-2">${d.name}</h4>
+                            <span class="text-[10px] text-slate-400 shrink-0">${d.date || 'Baru saja'}</span>
+                        </div>
+                        <p class="text-xs text-slate-600 mt-1 break-words">"${d.message}"</p>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function renderGallery(gallery) {
+            const container = document.getElementById('gallery-carousel');
+            if(!gallery || !container) return;
+            container.innerHTML = gallery.map(photo => `
+                <div class="gallery-item min-w-[280px] md:min-w-[350px] aspect-video relative rounded-lg overflow-hidden snap-center border bg-slate-200 break-inside-avoid">
+                    <img src="${photo.url}" class="w-full h-full object-cover">
+                    <div class="gallery-caption absolute inset-0 bg-gradient-to-t from-black/80 via-transparent flex flex-col justify-end p-3 pointer-events-none">
+                        <p class="text-white text-xs font-bold">${photo.caption}</p>
+                        <p class="text-slate-300 text-[10px]">${photo.date}</p>
+                    </div>
+                    <button onclick="window.deleteItem('gallery', ${gallery.indexOf(photo)})" class="absolute top-2 right-2 bg-red-600 text-white p-1 rounded-full opacity-50 hover:opacity-100 no-print pointer-events-auto"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+                </div>
+            `).join('');
+            lucide.createIcons();
+        }
+
+        window.formatRupiah = (n) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(n);
+        
+        window.deleteNeedItem = (idx) => {
+            if(confirm('Hapus item kebutuhan ini?')) {
+                const list = window.appState.needsList;
+                list.splice(idx, 1);
+                window.saveDataToBackend('needsList', list);
+                renderNeedsEditInputs();
+            }
+        };
+
+        window.deleteItem = (key, idx) => {
+            if(confirm('Hapus item ini?')) {
+                const arr = window.appState[key];
+                arr.splice(idx, 1);
+                window.saveDataToBackend(key, arr);
+            }
+        };
+
+        initApp();
+    </script>
+
+    <!-- Fonts & Style -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        .animate-fade-in { animation: fadeIn 0.5s ease-in; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .snap-x { scroll-snap-type: x mandatory; }
+        .snap-center { scroll-snap-align: center; }
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+        
+        /* CSS KHUSUS PRINT */
+        @media print {
+            body { background: white !important; color: black !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+            .no-print, header button, .fixed, .sticky, button, form { display: none !important; }
+            
+            /* Header Reset */
+            header { padding-top: 20px !important; padding-bottom: 20px !important; background: none !important; color: black !important; border-bottom: 2px solid #000; }
+            header .text-indigo-100 { color: #555 !important; }
+            header .bg-yellow-400 { background: none !important; color: black !important; border: 1px solid #000; }
+            
+            /* Container Reset */
+            .container { max-width: 100% !important; margin-top: 0 !important; padding: 0 !important; }
+            .shadow-xl, .shadow-sm { box-shadow: none !important; border: 1px solid #ddd !important; }
+            
+            /* Progress Bars */
+            .bg-slate-100 { background-color: #eee !important; }
+            #money-bar, #item-bar { background-color: #555 !important; -webkit-print-color-adjust: exact; }
+            
+            /* Table */
+            table { width: 100%; border-collapse: collapse; page-break-inside: avoid; }
+            th, td { border: 1px solid #000; padding: 8px; }
+            
+            /* GALLERY PRINT LAYOUT (Grid System) */
+            #gallery-carousel {
+                display: grid !important;
+                grid-template-columns: repeat(2, 1fr) !important;
+                gap: 15px !important;
+                overflow: visible !important;
+                padding: 0 !important;
+                margin-top: 20px !important;
+            }
+            .gallery-item {
+                min-width: auto !important;
+                aspect-ratio: auto !important;
+                border: 1px solid #ccc !important;
+                display: flex !important;
+                flex-direction: column !important;
+                break-inside: avoid !important;
+                page-break-inside: avoid !important;
+                background: white !important;
+            }
+            .gallery-item img {
+                width: 100% !important;
+                height: 200px !important;
+                object-fit: cover !important;
+            }
+            
+            /* CAPTION FIX FOR PRINT */
+            .gallery-caption {
+                position: static !important; /* Pindah ke bawah, bukan numpuk */
+                background: none !important; /* Hapus gradasi hitam */
+                color: black !important;
+                padding: 8px !important;
+                border-top: 1px solid #eee !important;
+            }
+            .gallery-caption p.text-white {
+                color: black !important; /* Ubah teks putih jadi hitam */
+                font-weight: bold !important;
+            }
+            .gallery-caption p.text-slate-300 {
+                color: #555 !important; /* Ubah teks abu terang jadi abu gelap */
+            }
+            
+            footer { display: none; }
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 flex flex-col min-h-screen">
+
+    <!-- HEADER -->
+    <header class="bg-gradient-to-br from-indigo-700 to-blue-800 text-white pt-6 pb-32 px-4 relative overflow-hidden">
+        <div class="absolute top-0 left-0 w-full h-full opacity-10 bg-[url('https://www.transparenttextures.com/patterns/notebook.png')] no-print"></div>
+        
+        <div class="max-w-4xl mx-auto relative z-10">
+            <!-- IDENTITY & PRINT BUTTON ROW -->
+            <div class="flex items-center justify-between gap-4 mb-8">
+                <div class="flex items-center gap-3">
+                    <img src="https://i.ibb.co.com/KxWySDqp/logo-cpi.png" alt="Logo" class="w-12 h-12 rounded-full border-2 border-white shadow-md">
+                    <div class="text-left">
+                        <h2 class="text-lg font-bold leading-tight">Yayasan Cakrawala Peduli Indonesia</h2>
+                        <p class="text-xs text-indigo-200">Program Kemanusiaan Sawang</p>
+                    </div>
+                </div>
+                <!-- PRINT BUTTON (Desktop) -->
+                <button onclick="window.print()" class="bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition no-print">
+                    <i data-lucide="printer" class="w-4 h-4"></i> Cetak Laporan
+                </button>
+            </div>
+
+            <div class="text-center max-w-2xl mx-auto">
+                <div class="inline-flex items-center gap-2 bg-yellow-400 text-yellow-900 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider mb-4 shadow-lg">
+                    <i data-lucide="sparkles" class="w-3 h-3"></i> Intervensi Krueng Mane
+                </div>
+                <h1 class="text-2xl md:text-4xl font-extrabold mb-4 leading-tight">Program Bantuan Sawang - Tahap 2</h1>
+                <p class="text-indigo-100 text-lg mb-6">
+                    Yayasan Cakrawala Peduli Indonesia<br>
+                    <span class="text-base opacity-90 block mt-1">Fokus: Pendidikan & Gizi di Camp Krueng Mane</span>
+                </p>
+                
+                <div class="flex flex-wrap gap-4 justify-center no-print">
+                    <button onclick="scrollToId('donate-money')" class="bg-white text-indigo-700 px-6 py-3 rounded-xl font-bold text-sm shadow-xl hover:bg-indigo-50 transition transform hover:-translate-y-1 flex items-center gap-2">
+                        <i data-lucide="coins" class="w-4 h-4"></i> Donasi Uang
+                    </button>
+                    <button onclick="scrollToId('donate-goods')" class="bg-transparent border-2 border-white/30 text-white px-6 py-3 rounded-xl font-bold text-sm hover:bg-white/10 transition transform hover:-translate-y-1 flex items-center gap-2">
+                        <i data-lucide="shirt" class="w-4 h-4"></i> Kirim Barang
+                    </button>
+                    <button onclick="scrollToId('donate-money')" class="bg-emerald-500 text-white px-6 py-3 rounded-xl font-bold text-sm shadow-xl hover:bg-emerald-600 transition transform hover:-translate-y-1 flex items-center gap-2">
+                        <i data-lucide="heart-handshake" class="w-4 h-4"></i> Jumat Berkah
+                    </button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- DASHBOARD CARD -->
+    <div class="container mx-auto px-4 -mt-20 relative z-20 max-w-3xl">
+        <div class="bg-white rounded-2xl shadow-xl border border-slate-100 p-6 md:p-8">
+            <div class="flex items-center justify-between mb-6">
+                <h2 class="text-xl font-bold text-slate-800 flex items-center gap-2">
+                    <i data-lucide="target" class="w-6 h-6 text-red-500"></i> Target Terkini
+                </h2>
+                <!-- Admin Edit Trigger -->
+                <button onclick="toggleAdminPanel()" class="text-slate-300 hover:text-slate-600 no-print" title="Admin Menu">
+                    <i data-lucide="settings" class="w-4 h-4"></i>
+                </button>
+            </div>
+
+            <!-- 1. Money Progress -->
+            <div class="mb-8">
+                <div class="flex justify-between text-sm mb-2 font-medium">
+                    <span class="text-slate-600">Dana Terkumpul</span>
+                    <span class="text-indigo-600 font-bold" id="money-percent">0%</span>
+                </div>
+                <div class="w-full bg-slate-100 rounded-full h-4 mb-2 overflow-hidden border">
+                    <div id="money-bar" class="bg-gradient-to-r from-green-400 to-emerald-500 h-full rounded-full transition-all duration-1000 shadow-[0_0_10px_rgba(16,185,129,0.4)]" style="width: 0%"></div>
+                </div>
+                <div class="flex justify-between items-end">
+                    <span id="money-current" class="text-2xl font-mono font-bold text-slate-800">Rp 0</span>
+                    <span class="text-xs text-slate-400">Target: <span id="money-target">Rp 0</span></span>
+                </div>
+            </div>
+
+            <div class="border-t border-slate-100 my-6"></div>
+
+            <!-- 2. Goods Progress -->
+            <div>
+                <div class="flex justify-between text-sm mb-2 font-medium">
+                    <span class="text-slate-600">Barang Terkumpul (Seragam)</span>
+                    <span class="text-blue-600 font-bold"><span id="item-current">0</span> / <span id="item-target">0</span> Pcs</span>
+                </div>
+                <div class="w-full bg-slate-100 rounded-full h-4 overflow-hidden border">
+                    <div id="item-bar" class="bg-gradient-to-r from-blue-400 to-indigo-500 h-full rounded-full transition-all duration-1000" style="width: 0%"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MAIN CONTENT -->
+    <main class="flex-grow container mx-auto px-4 py-12 max-w-3xl space-y-12">
+
+        <!-- NARASI PROGRAM (Inserted Here) -->
+        <section class="bg-white p-6 md:p-8 rounded-2xl shadow-sm border border-indigo-100 relative overflow-hidden">
+            <div class="absolute top-0 right-0 w-24 h-24 bg-indigo-50 rounded-bl-full -mr-6 -mt-6"></div>
+            
+            <div class="relative z-10">
+                <div class="flex items-center gap-3 mb-4">
+                    <div class="bg-indigo-600 text-white p-2 rounded-lg">
+                        <i data-lucide="file-text" class="w-5 h-5"></i>
+                    </div>
+                    <h2 class="text-xl font-bold text-slate-800">Intervensi Pendidikan & Gizi</h2>
+                </div>
+                
+                <p class="text-slate-600 leading-relaxed mb-6 text-sm md:text-base">
+                    Kami membagi fokus pemulihan korban banjir Sawang menjadi dua sektor vital. Prioritas kami adalah keberlanjutan pendidikan anak dan pemenuhan gizi pengungsi.
+                </p>
+
+                <div class="space-y-6">
+                    <!-- Point 1 -->
+                    <div class="flex gap-4 items-start">
+                        <div class="bg-orange-100 text-orange-600 p-2 rounded-full shrink-0 mt-1">
+                            <span class="font-bold text-sm w-4 h-4 flex items-center justify-center">1</span>
+                        </div>
+                        <div>
+                            <h3 class="font-bold text-slate-800 text-lg mb-2">Bantuan Seragam Sekolah SD</h3>
+                            <p class="text-slate-600 text-sm leading-relaxed">
+                                Banjir merusak fasilitas dan harta benda warga. Banyak siswa kehilangan pakaian sekolah. Kondisi ini menghambat mereka kembali ke ruang kelas. Kami menyediakan paket seragam baru bagi siswa SD terdampak. Langkah ini krusial untuk menjaga semangat belajar dan rutinitas anak di tengah situasi darurat.
+                            </p>
+                        </div>
+                    </div>
+
+                    <!-- Point 2 -->
+                    <div class="flex gap-4 items-start">
+                        <div class="bg-emerald-100 text-emerald-600 p-2 rounded-full shrink-0 mt-1">
+                            <span class="font-bold text-sm w-4 h-4 flex items-center justify-center">2</span>
+                        </div>
+                        <div>
+                            <h3 class="font-bold text-slate-800 text-lg mb-2">Program Jumat Berkah (Dapur Umum)</h3>
+                            <p class="text-slate-600 text-sm leading-relaxed mb-3">
+                                Kami menyiapkan makanan siap santap bagi pengungsi khusus di Camp Krueng Mane. Strategi kami mengutamakan efisiensi anggaran tanpa mengurangi kualitas gizi.
+                            </p>
+                            <div class="bg-slate-50 p-4 rounded-xl border border-slate-200 grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div>
+                                    <h4 class="font-bold text-xs text-slate-500 uppercase mb-1">Biaya</h4>
+                                    <p class="text-sm font-bold text-emerald-600">Rp 10.000 / porsi</p>
+                                </div>
+                                <div>
+                                    <h4 class="font-bold text-xs text-slate-500 uppercase mb-1">Eksekusi</h4>
+                                    <p class="text-xs text-slate-700">Belanja bahan segar langsung (beras, lauk, sayur).</p>
+                                </div>
+                                <div>
+                                    <h4 class="font-bold text-xs text-slate-500 uppercase mb-1">Proses</h4>
+                                    <p class="text-xs text-slate-700">Dimasak relawan di lokasi, higienis & hangat.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mt-6 pt-4 border-t border-slate-100 text-center">
+                    <p class="text-sm font-medium text-indigo-700 italic">
+                        "Pendekatan ini memastikan setiap Rupiah donasi memiliki nilai manfaat maksimal bagi korban."
+                    </p>
+                </div>
+            </div>
+        </section>
+
+        <!-- RINCIAN KEBUTUHAN (EDITABLE) -->
+        <section>
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-lg font-bold text-slate-800 flex items-center gap-2">
+                    <i data-lucide="list-checks" class="w-5 h-5 text-indigo-600"></i> Rincian Kebutuhan
+                </h3>
+                <button onclick="toggleNeedsEdit()" class="text-xs text-indigo-600 font-bold hover:bg-indigo-50 px-2 py-1 rounded no-print">
+                    <i data-lucide="edit-3" class="w-3 h-3 inline"></i> Edit Rincian
+                </button>
+            </div>
+
+            <!-- View Mode -->
+            <div id="needs-view" class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                <table class="w-full text-sm text-left">
+                    <thead class="bg-slate-50 text-slate-500 font-semibold">
+                        <tr>
+                            <th class="p-3">Item</th>
+                            <th class="p-3 text-center">Qty</th>
+                            <th class="p-3 text-right hidden sm:table-cell">Harga Satuan</th>
+                            <th class="p-3 text-right">Total</th>
+                        </tr>
+                    </thead>
+                    <tbody id="needs-body" class="divide-y divide-slate-100"></tbody>
+                    <tfoot class="bg-slate-50 font-bold text-slate-700">
+                        <tr>
+                            <td colspan="3" class="p-3 text-right">Total Kebutuhan</td>
+                            <td class="p-3 text-right font-mono text-indigo-700" id="needs-total-footer">Rp 0</td>
+                        </tr>
+                    </tfoot>
+                </table>
+                <div class="p-3 bg-yellow-50 text-yellow-800 text-xs text-center border-t border-yellow-100 no-print">
+                    *Harga estimasi pasar lokal. Total target donasi otomatis mengikuti rincian ini.
+                </div>
+            </div>
+
+            <!-- Edit Mode -->
+            <div id="needs-edit" class="hidden bg-slate-50 p-4 rounded-xl border border-indigo-200 no-print">
+                <h4 class="font-bold text-sm mb-3">Edit Daftar Kebutuhan</h4>
+                <div id="needs-edit-container" class="space-y-3"></div>
+                <div class="mt-4 flex gap-2">
+                    <button onclick="addNeedItem()" class="bg-white border text-slate-600 px-3 py-2 rounded text-xs hover:bg-slate-100 font-bold">+ Tambah Baris</button>
+                    <button onclick="saveNeeds()" class="bg-indigo-600 text-white px-4 py-2 rounded text-xs hover:bg-indigo-700 font-bold ml-auto">Simpan Perubahan</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- EVIDEN CAROUSEL (NEW FEATURE) -->
+        <section class="break-inside-avoid">
+            <div class="flex justify-between items-center mb-3 px-2">
+                <h3 class="text-lg font-bold text-slate-800 flex items-center gap-2"><i data-lucide="camera" class="w-5 h-5 text-indigo-600"></i> Dokumentasi & Bukti</h3>
+                <label class="cursor-pointer text-indigo-600 text-xs font-bold hover:underline no-print">
+                    + Upload Foto
+                    <input type="file" accept="image/*" class="hidden" onchange="handleImageUpload(event)">
+                </label>
+            </div>
+            
+            <div class="relative group">
+                <div id="gallery-carousel" class="flex overflow-x-auto gap-4 py-2 snap-x scrollbar-hide scroll-smooth"></div>
+                <!-- Nav Arrows (Desktop) -->
+                <button onclick="scrollGallery(-1)" class="absolute left-0 top-1/2 -translate-y-1/2 bg-white/80 p-2 rounded-full shadow-lg hover:bg-white hidden md:block no-print"><i data-lucide="chevron-left" class="w-5 h-5"></i></button>
+                <button onclick="scrollGallery(1)" class="absolute right-0 top-1/2 -translate-y-1/2 bg-white/80 p-2 rounded-full shadow-lg hover:bg-white hidden md:block no-print"><i data-lucide="chevron-right" class="w-5 h-5"></i></button>
+            </div>
+        </section>
+
+        <!-- ACTION SECTIONS -->
+        <div class="grid md:grid-cols-2 gap-6 no-print">
+            <!-- MONEY (UPDATED TO BRI - JUMAT BERKAH) -->
+            <div id="donate-money" class="bg-emerald-50 p-6 rounded-xl border-2 border-emerald-200 hover:border-emerald-400 transition shadow-sm group">
+                <div class="bg-emerald-100 w-12 h-12 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition">
+                    <i data-lucide="heart-handshake" class="w-6 h-6 text-emerald-600"></i>
+                </div>
+                <div class="flex justify-between items-start">
+                    <h3 class="text-lg font-bold text-slate-800 mb-1">Donasi Uang</h3>
+                    <span class="bg-emerald-600 text-white text-[10px] px-2 py-1 rounded-full font-bold">JUMAT BERKAH</span>
+                </div>
+                <p class="text-sm text-slate-500 mb-4">Transfer amanah untuk pendidikan & gizi mereka.</p>
+                <div class="bg-white p-3 rounded-lg mb-4 text-center border border-emerald-100">
+                    <div class="text-xs text-slate-400 uppercase font-bold">Bank BRI</div>
+                    <div class="text-xl font-mono font-bold text-slate-800 tracking-wider">2200 0100 0302 301</div>
+                    <div class="text-xs text-slate-500 mt-1">an Yayasan Cakrawala Peduli Indonesia</div>
+                    <button onclick="copyRek()" class="text-xs text-emerald-600 font-bold mt-2 hover:underline flex items-center justify-center gap-1 w-full"><i data-lucide="copy" class="w-3 h-3"></i> Salin Nomor</button>
+                </div>
+                <a href="https://wa.me/6281392047146?text=Halo,%20saya%20ingin%20konfirmasi%20donasi%20Jumat%20Berkah%20ke%20BRI%20sebesar:" target="_blank" class="block w-full bg-emerald-600 hover:bg-emerald-700 text-white text-center py-3 rounded-lg font-bold text-sm transition no-print">Konfirmasi Transfer</a>
+            </div>
+
+            <!-- GOODS -->
+            <div id="donate-goods" class="bg-white p-6 rounded-xl border-2 border-blue-100 hover:border-blue-300 transition shadow-sm group">
+                <div class="bg-blue-100 w-12 h-12 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition">
+                    <i data-lucide="package" class="w-6 h-6 text-blue-600"></i>
+                </div>
+                <h3 class="text-lg font-bold text-slate-800 mb-2">Opsi B: Kirim Barang</h3>
+                <p class="text-sm text-slate-500 mb-4">Punya seragam layak pakai atau baru? Kirimkan langsung.</p>
+                <div class="bg-slate-50 p-3 rounded-lg mb-4">
+                    <div class="text-[10px] text-slate-400 uppercase font-bold mb-1">Alamat Posko:</div>
+                    <p class="text-xs text-slate-700 leading-relaxed font-medium">
+                        Prodi Sosiologi FISIP USK<br>
+                        Jl. Tgk Tanoh Abee No. 4, Kopelma Darussalam, Banda Aceh, 23115.
+                    </p>
+                </div>
+                <a href="https://wa.me/6281392047146?text=Halo,%20saya%20ingin%20mengirimkan%20paket%20seragam%20sekolah." target="_blank" class="block w-full bg-white border-2 border-blue-600 text-blue-600 hover:bg-blue-50 text-center py-3 rounded-lg font-bold text-sm transition no-print">Konfirmasi Pengiriman</a>
+            </div>
+        </div>
+
+        <!-- DONOR FEED -->
+        <section>
+            <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
+                <h3 class="font-bold text-slate-800 mb-4 flex items-center gap-2"><i data-lucide="message-square" class="w-5 h-5 text-slate-400"></i> Dukungan Masuk</h3>
+                <form onsubmit="submitSupport(event)" class="mb-6 flex gap-2 no-print">
+                    <input type="text" id="donor-name" placeholder="Nama" class="w-1/3 border p-2 rounded text-sm bg-slate-50">
+                    <input type="text" id="donor-msg" placeholder="Pesan semangat..." class="flex-grow border p-2 rounded text-sm bg-slate-50">
+                    <select id="donor-type" class="border p-2 rounded text-sm bg-slate-50">
+                        <option value="info">Pesan</option><option value="money">Uang</option><option value="goods">Barang</option>
+                    </select>
+                    <button class="bg-slate-800 text-white p-2 rounded hover:bg-black"><i data-lucide="send" class="w-4 h-4"></i></button>
+                </form>
+                <div id="donor-feed" class="space-y-3 max-h-80 overflow-y-auto pr-2"></div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- FLOATING BOTTOM BAR (Share & Print) -->
+    <div class="fixed bottom-0 left-0 w-full bg-white border-t p-3 flex justify-between items-center z-50 no-print shadow-[0_-5px_15px_rgba(0,0,0,0.1)]">
+        <div class="text-xs font-bold text-slate-500 hidden md:block">Bagikan kebaikan ini:</div>
+        <div class="flex gap-2 w-full md:w-auto justify-center">
+            <button onclick="shareSocial('wa')" class="flex-1 md:flex-none bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg font-bold text-sm flex items-center justify-center gap-2">
+                <i data-lucide="message-circle" class="w-4 h-4"></i> WhatsApp
+            </button>
+            <button onclick="shareSocial('fb')" class="flex-1 md:flex-none bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold text-sm flex items-center justify-center gap-2">
+                <i data-lucide="facebook" class="w-4 h-4"></i> Facebook
+            </button>
+            <button onclick="window.print()" class="flex-1 md:flex-none bg-slate-800 hover:bg-slate-900 text-white px-4 py-2 rounded-lg font-bold text-sm flex items-center justify-center gap-2">
+                <i data-lucide="printer" class="w-4 h-4"></i> Print
+            </button>
+        </div>
+    </div>
+    <div class="h-16"></div>
+
+    <!-- MODAL CAPTION -->
+    <div id="caption-modal" class="hidden fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
+        <div class="bg-white p-6 rounded-lg w-full max-w-sm shadow-2xl">
+            <h4 class="font-bold mb-2">Keterangan Foto</h4>
+            <input type="text" id="temp-caption" class="w-full border p-2 rounded mb-4 text-sm">
+            <div class="flex justify-end gap-2">
+                <button onclick="cancelUpload()" class="px-4 py-2 text-sm">Batal</button>
+                <button onclick="confirmUpload()" class="px-4 py-2 bg-blue-600 text-white rounded text-sm">Upload</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ADMIN MODAL -->
+    <div id="admin-modal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+        <div class="bg-white p-6 rounded-xl w-full max-w-xs shadow-2xl">
+            <h4 class="font-bold mb-4 border-b pb-2">Update Manual (Admin)</h4>
+            <div class="mb-4">
+                <label class="text-xs font-bold block mb-1">Tambah Uang (Rp)</label>
+                <input type="number" id="admin-add-money" class="w-full border p-2 rounded" placeholder="Contoh: 100000">
+                <button onclick="adminUpdate('money')" class="w-full bg-green-100 text-green-700 font-bold mt-2 py-1 rounded text-xs hover:bg-green-200">+ Input Uang</button>
+            </div>
+            <div class="mb-4">
+                <label class="text-xs font-bold block mb-1">Tambah Barang (Pcs)</label>
+                <input type="number" id="admin-add-item" class="w-full border p-2 rounded" placeholder="Contoh: 5">
+                <button onclick="adminUpdate('goods')" class="w-full bg-blue-100 text-blue-700 font-bold mt-2 py-1 rounded text-xs hover:bg-blue-200">+ Input Barang</button>
+            </div>
+            <button onclick="toggleAdminPanel()" class="w-full border py-2 rounded text-xs text-slate-500">Tutup</button>
+        </div>
+    </div>
+
+    <!-- FOOTER -->
+    <footer class="bg-slate-900 text-slate-400 py-8 text-center border-t border-slate-800 mt-auto text-xs">
+        <p>&copy; 2026 Yayasan Cakrawala Peduli Indonesia. Program Bantuan Krueng Mane.</p>
+    </footer>
+
+    <!-- LOGIC -->
+    <script>
+        function scrollToId(id) { document.getElementById(id).scrollIntoView({behavior: 'smooth'}); }
+        
+        function copyRek() { 
+            navigator.clipboard.writeText('220001000302301'); 
+            alert('Nomor Rekening BRI Tersalin!'); 
+        }
+        
+        function toggleAdminPanel() { document.getElementById('admin-modal').classList.toggle('hidden'); }
+
+        function shareSocial(type) {
+            const url = encodeURIComponent(window.location.href);
+            const text = encodeURIComponent("Bantu donasi seragam sekolah & makanan untuk korban banjir Krueng Mane:");
+            if(type === 'wa') window.open(`https://wa.me/?text=${text}%20${url}`);
+            if(type === 'fb') window.open(`https://www.facebook.com/sharer/sharer.php?u=${url}`);
+        }
+
+        function adminUpdate(type) {
+            const id = type === 'money' ? 'admin-add-money' : 'admin-add-item';
+            const val = document.getElementById(id).value;
+            if(val) window.addDonation(val, type).then(() => alert('Data Updated!'));
+            document.getElementById(id).value = '';
+        }
+
+        function submitSupport(e) {
+            e.preventDefault();
+            const name = document.getElementById('donor-name').value || 'Hamba Allah';
+            const msg = document.getElementById('donor-msg').value;
+            const type = document.getElementById('donor-type').value;
+            if(msg) window.addDonorMessage(name, msg, type).then(() => { document.getElementById('donor-msg').value = ''; alert('Terkirim!'); });
+        }
+
+        // --- NEEDS EDIT LOGIC ---
+        function toggleNeedsEdit() {
+            const view = document.getElementById('needs-view');
+            const edit = document.getElementById('needs-edit');
+            if(edit.classList.contains('hidden')) {
+                view.classList.add('hidden');
+                edit.classList.remove('hidden');
+                renderNeedsEditInputs();
+            } else {
+                view.classList.remove('hidden');
+                edit.classList.add('hidden');
+            }
+        }
+
+        function renderNeedsEditInputs() {
+            const list = window.appState.needsList || [];
+            document.getElementById('needs-edit-container').innerHTML = list.map((item, i) => `
+                <div class="bg-white p-3 border rounded relative">
+                    <button onclick="window.deleteNeedItem(${i})" class="absolute top-2 right-2 text-red-500 p-1"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+                    <div class="grid grid-cols-1 gap-2">
+                        <input id="ni-${i}" value="${item.item}" class="border-b text-sm font-bold w-full p-1" placeholder="Nama Barang">
+                        <div class="flex gap-2">
+                            <input type="number" id="nq-${i}" value="${item.qty}" class="border-b text-sm w-1/2 p-1" placeholder="Qty">
+                            <input type="number" id="np-${i}" value="${item.unitPrice}" class="border-b text-sm w-1/2 p-1" placeholder="Harga Satuan">
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+            lucide.createIcons();
+        }
+
+        function addNeedItem() {
+            // Capture inputs first
+            const currentList = (window.appState.needsList || []).map((item, i) => ({
+                item: document.getElementById(`ni-${i}`) ? document.getElementById(`ni-${i}`).value : item.item,
+                qty: document.getElementById(`nq-${i}`) ? Number(document.getElementById(`nq-${i}`).value) : item.qty,
+                unitPrice: document.getElementById(`np-${i}`) ? Number(document.getElementById(`np-${i}`).value) : item.unitPrice
+            }));
+            currentList.push({ item: "Barang Baru", qty: 1, unitPrice: 0 });
+            window.appState.needsList = currentList;
+            renderNeedsEditInputs();
+        }
+
+        function saveNeeds() {
+            const newList = (window.appState.needsList || []).map((old, i) => {
+                const qty = Number(document.getElementById(`nq-${i}`).value);
+                const price = Number(document.getElementById(`np-${i}`).value);
+                return {
+                    item: document.getElementById(`ni-${i}`).value,
+                    qty: qty,
+                    unitPrice: price,
+                    total: qty * price
+                };
+            });
+            window.saveDataToBackend('needsList', newList);
+            toggleNeedsEdit();
+        }
+
+        // CAROUSEL LOGIC
+        function scrollGallery(dir) { document.getElementById('gallery-carousel').scrollBy({ left: dir * 300, behavior: 'smooth' }); }
+        
+        // IMAGES UPLOAD
+        let tempImageBase64 = null;
+        function handleImageUpload(e) {
+            const file = e.target.files[0]; if (!file) return;
+            document.getElementById('caption-modal').classList.remove('hidden');
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+                const img = new Image(); img.src = ev.target.result;
+                img.onload = () => {
+                    const canvas = document.createElement('canvas'), ctx = canvas.getContext('2d');
+                    const scale = 400 / img.width; canvas.width = 400; canvas.height = img.height * scale;
+                    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                    tempImageBase64 = canvas.toDataURL('image/jpeg', 0.5);
+                };
+            };
+            reader.readAsDataURL(file);
+        }
+        function confirmUpload() {
+            if(tempImageBase64) {
+                const caption = document.getElementById('temp-caption').value || "Dokumentasi";
+                const newImg = { id: Date.now(), url: tempImageBase64, caption, date: new Date().toLocaleDateString('id-ID') };
+                const arr = window.appState.gallery || []; arr.unshift(newImg);
+                window.saveDataToBackend('gallery', arr).then(cancelUpload);
+            }
+        }
+        function cancelUpload() { document.getElementById('caption-modal').classList.add('hidden'); tempImageBase64 = null; }
+
+        document.addEventListener('DOMContentLoaded', () => { lucide.createIcons(); });
+    </script>
+</body>
+</html>
