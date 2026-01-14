@@ -409,7 +409,14 @@
                     throw new Error("ImgBB Error: " + (result.error ? result.error.message : "Gagal Upload"));
                 }
 
-                const imageUrl = result.data.url;
+                // Ambil link standar dari API
+                let imageUrl = result.data.display_url || result.data.url;
+
+                // PERBAIKAN KHUSUS: Paksa ganti domain ke i.ibb.co.com jika domainnya i.ibb.co
+                // Ini untuk mengatasi masalah blokir/akses pada domain default
+                if (imageUrl.includes("i.ibb.co") && !imageUrl.includes("i.ibb.co.com")) {
+                    imageUrl = imageUrl.replace("i.ibb.co", "i.ibb.co.com");
+                }
 
                 // 2. Simpan URL ke Firebase (Tampilan)
                 const caption = document.getElementById('temp-caption').value || "Dokumentasi";
@@ -428,14 +435,14 @@
                 try {
                     await fetch(googleScriptUrl, {
                         method: 'POST',
-                        mode: 'no-cors', // Bypass CORS check
+                        mode: 'no-cors', 
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
-                            nama: "FOTO: " + caption, // Mapping ke kolom Nama
-                            nominal: imageUrl         // Mapping ke kolom Nominal (URL)
+                            nama: "FOTO: " + caption, 
+                            nominal: imageUrl         // Link yang sudah diperbaiki
                         })
                     });
-                    console.log("Terkirim ke Google Sheet");
+                    console.log("Terkirim ke Google Sheet:", imageUrl);
                 } catch (gsErr) {
                     console.warn("Gagal simpan ke Sheet:", gsErr);
                 }
