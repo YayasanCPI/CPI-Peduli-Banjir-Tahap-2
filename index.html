@@ -18,7 +18,6 @@
         import { getFirestore, doc, setDoc, onSnapshot, updateDoc, arrayUnion } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- KONFIGURASI ---
-        // 1. ISI API KEY FIREBASE ANDA (Wajib untuk Online Sync)
         const firebaseConfig = {
             apiKey: "AIzaSyARoWTlJTd5eWIZP51QOhFihgOssAjz8R8",
             authDomain: "donasi-banjir.firebaseapp.com",
@@ -28,39 +27,84 @@
             appId: "1:407787434296:web:85d491bab2ca3b9d4cd1cd"
         };
 
-        // 2. ISI API KEY IMGBB (Untuk Upload Foto Gratis)
-        // Cara dapat: Daftar di https://api.imgbb.com/ (Gratis, 1 menit)
         const imgbbApiKey = "d2bc6a4ae014ca59acf3ed7ee32a9173";
 
         let db, auth, docRef;
         let useLocalStorage = false;
 
-        async function initApp() {
+        // --- FUNGSI GLOBAL (WAJIB menempel ke window agar bisa dipanggil HTML) ---
+
+        window.scrollToId = (id) => { 
+            const el = document.getElementById(id);
+            if(el) el.scrollIntoView({behavior: 'smooth'}); 
+        }
+        
+        window.copyRek = () => { 
+            navigator.clipboard.writeText('220001000302301'); 
+            alert('Nomor Rekening BRI Tersalin!'); 
+        }
+        
+        window.toggleAdminPanel = () => { 
+            const el = document.getElementById('admin-modal');
+            if(el) el.classList.toggle('hidden'); 
+        }
+
+        window.shareSocial = (type) => {
+            const url = encodeURIComponent(window.location.href);
+            const text = encodeURIComponent("Bantu donasi seragam sekolah & makanan untuk korban banjir Krueng Mane:");
+            if(type === 'wa') window.open(`https://wa.me/?text=${text}%20${url}`);
+            if(type === 'fb') window.open(`https://www.facebook.com/sharer/sharer.php?u=${url}`);
+        }
+
+        window.adminUpdate = (type) => {
+            const id = type === 'money' ? 'admin-add-money' : 'admin-add-item';
+            const val = document.getElementById(id).value;
+            if(val) window.addDonation(val, type).then(() => alert('Data Updated!'));
+            document.getElementById(id).value = '';
+        }
+
+        window.submitSupport = (e) => {
+            e.preventDefault();
+            const name = document.getElementById('donor-name').value || 'Hamba Allah';
+            const msg = document.getElementById('donor-msg').value;
+            const type = document.getElementById('donor-type').value;
+            if(msg) window.addDonorMessage(name, msg, type).then(() => { document.getElementById('donor-msg').value = ''; alert('Terkirim!'); });
+        }
+
+        // --- CORE FUNCTIONS ---
+
+        window.initApp = async function() {
             try {
-                if (!firebaseConfig.apiKey) throw new Error("API Key Firebase Kosong");
-                
                 const app = initializeApp(firebaseConfig);
                 auth = getAuth(app);
                 db = getFirestore(app);
+                
+                // Login Anonim
                 await signInAnonymously(auth);
                 
                 docRef = doc(db, 'campaigns', 'krueng_mane_bantuan_2025');
                 setupRealtimeListener();
                 updateConnectionStatus(true);
             } catch (e) {
-                console.warn("Masuk Mode Offline:", e.message);
+                console.error("Error Koneksi:", e);
+                if (e.code === 'auth/admin-restricted-operation' || e.code === 'auth/operation-not-allowed') {
+                    alert("PENTING: Fitur 'Anonymous' belum aktif di Firebase Console.");
+                } else {
+                    console.warn("Masuk Mode Offline:", e.message);
+                }
                 useLocalStorage = true;
                 updateConnectionStatus(false);
                 loadFromLocal();
             }
-        }
+        };
 
         function updateConnectionStatus(isOnline) {
             const el = document.getElementById('connection-status');
+            if (!el) return;
             if (isOnline) {
-                el.innerHTML = '<span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span> <span class="text-green-700 font-bold">Online (Live Sync)</span>';
+                el.innerHTML = '<span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span> <span class="text-green-700 font-bold">Online (Siap Upload)</span>';
             } else {
-                el.innerHTML = '<span class="w-2 h-2 rounded-full bg-slate-400"></span> <span class="text-slate-500 font-bold">Offline (Mode Lokal)</span>';
+                el.innerHTML = '<span class="w-2 h-2 rounded-full bg-red-500"></span> <span class="text-red-500 font-bold">Offline (Cek Pengaturan)</span>';
             }
         }
 
@@ -72,6 +116,7 @@
                     initializeDB();
                 }
             }, (error) => {
+                console.error("Snapshot Error:", error);
                 useLocalStorage = true;
                 updateConnectionStatus(false);
                 loadFromLocal();
@@ -96,19 +141,24 @@
             };
             
             if (!useLocalStorage) {
-                await setDoc(docRef, initialData);
+                try {
+                    await setDoc(docRef, initialData);
+                } catch (e) {
+                    console.error("Gagal inisialisasi DB:", e);
+                }
             } else {
                 localStorage.setItem('krueng_mane_data', JSON.stringify(initialData));
                 updateUI(initialData);
             }
         }
 
-        // --- UPDATE FUNCTIONS ---
+        // --- UPDATE DATA ---
         window.saveDataToBackend = async (key, data) => { 
             try {
                 if (!useLocalStorage) await updateDoc(docRef, { [key]: data });
                 else { updateLocalData(key, data); }
             } catch(e) {
+                console.error("Gagal Simpan:", e);
                 alert("Gagal menyimpan: " + e.message);
             }
         };
@@ -142,11 +192,13 @@
         function loadFromLocal() { const d = getLocal(); d.targetMoney ? updateUI(d) : initializeDB(); }
         function updateLocalData(key, val) { const d = getLocal(); d[key] = val; saveLocal(d); }
 
-        // --- UPDATE UI CORE ---
+        // --- UI RENDERER ---
         function updateUI(data) {
             window.appState = data;
             
-            // Calculate Needs Total for Target
+            const moneyBar = document.getElementById('money-bar');
+            if (!moneyBar) return;
+
             let totalNeedMoney = 0;
             let totalNeedItems = 0;
             if (data.needsList) {
@@ -159,7 +211,6 @@
             }
             if (totalNeedItems === 0) totalNeedItems = data.targetItems;
 
-            // 1. Money Progress
             const targetMoney = totalNeedMoney || data.targetMoney; 
             const moneyPercent = Math.min((data.currentMoney / targetMoney) * 100, 100);
             document.getElementById('money-bar').style.width = `${moneyPercent}%`;
@@ -167,27 +218,23 @@
             document.getElementById('money-target').innerText = formatRupiah(targetMoney);
             document.getElementById('money-percent').innerText = `${Math.round(moneyPercent)}%`;
 
-            // 2. Items Progress
             const targetItems = totalNeedItems;
             const itemPercent = Math.min((data.currentItems / targetItems) * 100, 100);
             document.getElementById('item-bar').style.width = `${itemPercent}%`;
             document.getElementById('item-current').innerText = `${data.currentItems} Pcs`;
             document.getElementById('item-target').innerText = `${targetItems} Pcs`;
 
-            // 3. Needs Table
             if(data.needsList) renderNeeds(data.needsList);
-
-            // 4. Donor Feed
             if(data.donors) renderDonors(data.donors);
-
-            // 5. Gallery
             if(data.gallery) renderGallery(data.gallery);
             
-            lucide.createIcons();
+            if (typeof lucide !== 'undefined') lucide.createIcons();
         }
 
         function renderNeeds(list) {
-            document.getElementById('needs-body').innerHTML = list.map(n => `
+            const el = document.getElementById('needs-body');
+            if(!el) return;
+            el.innerHTML = list.map(n => `
                 <tr class="border-b border-slate-100 hover:bg-slate-50">
                     <td class="p-3 text-slate-700 font-medium text-xs md:text-sm">${n.item}</td>
                     <td class="p-3 text-center text-slate-600 text-xs md:text-sm">${n.qty}</td>
@@ -197,12 +244,15 @@
             `).join('');
             
             const total = list.reduce((sum, item) => sum + (item.qty * item.unitPrice), 0);
-            document.getElementById('needs-total-footer').innerText = formatRupiah(total);
+            const footer = document.getElementById('needs-total-footer');
+            if(footer) footer.innerText = formatRupiah(total);
         }
 
         function renderDonors(list) {
+            const el = document.getElementById('donor-feed');
+            if(!el) return;
             const displayList = [...list].reverse().slice(0, 10); 
-            document.getElementById('donor-feed').innerHTML = displayList.map(d => `
+            el.innerHTML = displayList.map(d => `
                 <div class="bg-white p-3 rounded-lg border border-slate-100 shadow-sm flex gap-3 items-start animate-fade-in break-inside-avoid">
                     <div class="bg-blue-100 p-2 rounded-full text-blue-600 shrink-0">
                         <i data-lucide="${d.type === 'money' ? 'banknote' : d.type === 'goods' ? 'shirt' : 'info'}" class="w-4 h-4"></i>
@@ -221,27 +271,90 @@
         function renderGallery(gallery) {
             const container = document.getElementById('gallery-carousel');
             if(!gallery || !container) return;
+            // Gunakan placeholder yang lebih bagus jika error
+            const errorImg = "https://placehold.co/400x300/e2e8f0/64748b?text=Foto+Tidak+Tersedia";
+            
             container.innerHTML = gallery.map(photo => `
                 <div class="gallery-item min-w-[280px] md:min-w-[350px] aspect-video relative rounded-lg overflow-hidden snap-center border bg-slate-200 break-inside-avoid">
-                    <img src="${photo.url}" class="w-full h-full object-cover">
+                    <img src="${photo.url}" class="w-full h-full object-cover" onerror="this.onerror=null;this.src='${errorImg}'">
                     <div class="gallery-caption absolute inset-0 bg-gradient-to-t from-black/80 via-transparent flex flex-col justify-end p-3 pointer-events-none">
                         <p class="text-white text-xs font-bold">${photo.caption}</p>
                         <p class="text-slate-300 text-[10px]">${photo.date}</p>
                     </div>
-                    <button onclick="window.deleteItem('gallery', ${gallery.indexOf(photo)})" class="absolute top-2 right-2 bg-red-600 text-white p-1 rounded-full opacity-50 hover:opacity-100 no-print pointer-events-auto"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+                    <button onclick="window.deleteItem('gallery', ${gallery.indexOf(photo)})" class="absolute top-2 right-2 bg-red-600 text-white p-2 rounded-full shadow-md hover:bg-red-700 transition z-20 pointer-events-auto" title="Hapus Foto">
+                        <i data-lucide="trash-2" class="w-4 h-4"></i>
+                    </button>
                 </div>
             `).join('');
-            lucide.createIcons();
+            if (typeof lucide !== 'undefined') lucide.createIcons();
         }
+
+        // --- UTILS & EDIT LOGIC ---
 
         window.formatRupiah = (n) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(n);
         
+        window.toggleNeedsEdit = () => {
+            const view = document.getElementById('needs-view');
+            const edit = document.getElementById('needs-edit');
+            if(edit.classList.contains('hidden')) {
+                view.classList.add('hidden');
+                edit.classList.remove('hidden');
+                window.renderNeedsEditInputs();
+            } else {
+                view.classList.remove('hidden');
+                edit.classList.add('hidden');
+            }
+        }
+
+        window.renderNeedsEditInputs = () => {
+            const list = window.appState.needsList || [];
+            document.getElementById('needs-edit-container').innerHTML = list.map((item, i) => `
+                <div class="bg-white p-3 border rounded relative">
+                    <button onclick="window.deleteNeedItem(${i})" class="absolute top-2 right-2 text-red-500 p-1"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+                    <div class="grid grid-cols-1 gap-2">
+                        <input id="ni-${i}" value="${item.item}" class="border-b text-sm font-bold w-full p-1" placeholder="Nama Barang">
+                        <div class="flex gap-2">
+                            <input type="number" id="nq-${i}" value="${item.qty}" class="border-b text-sm w-1/2 p-1" placeholder="Qty">
+                            <input type="number" id="np-${i}" value="${item.unitPrice}" class="border-b text-sm w-1/2 p-1" placeholder="Harga Satuan">
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+            if (typeof lucide !== 'undefined') lucide.createIcons();
+        }
+
+        window.addNeedItem = () => {
+            const currentList = (window.appState.needsList || []).map((item, i) => ({
+                item: document.getElementById(`ni-${i}`) ? document.getElementById(`ni-${i}`).value : item.item,
+                qty: document.getElementById(`nq-${i}`) ? Number(document.getElementById(`nq-${i}`).value) : item.qty,
+                unitPrice: document.getElementById(`np-${i}`) ? Number(document.getElementById(`np-${i}`).value) : item.unitPrice
+            }));
+            currentList.push({ item: "Barang Baru", qty: 1, unitPrice: 0 });
+            window.appState.needsList = currentList;
+            window.renderNeedsEditInputs();
+        }
+
+        window.saveNeeds = () => {
+            const newList = (window.appState.needsList || []).map((old, i) => {
+                const qty = Number(document.getElementById(`nq-${i}`).value);
+                const price = Number(document.getElementById(`np-${i}`).value);
+                return {
+                    item: document.getElementById(`ni-${i}`).value,
+                    qty: qty,
+                    unitPrice: price,
+                    total: qty * price
+                };
+            });
+            window.saveDataToBackend('needsList', newList);
+            window.toggleNeedsEdit();
+        }
+
         window.deleteNeedItem = (idx) => {
             if(confirm('Hapus item kebutuhan ini?')) {
                 const list = window.appState.needsList;
                 list.splice(idx, 1);
                 window.saveDataToBackend('needsList', list);
-                renderNeedsEditInputs();
+                window.renderNeedsEditInputs();
             }
         };
 
@@ -253,7 +366,11 @@
             }
         };
 
-        // --- NEW IMAGE UPLOAD LOGIC (IMGBB) ---
+        window.scrollGallery = (dir) => { 
+            document.getElementById('gallery-carousel').scrollBy({ left: dir * 300, behavior: 'smooth' }); 
+        }
+        
+        // --- IMAGE UPLOAD LOGIC ---
         let currentFileToUpload = null;
 
         window.handleImageUpload = (e) => {
@@ -261,36 +378,27 @@
             if (!file) return;
             
             currentFileToUpload = file;
-            // Tampilkan preview sementara di modal (lokal)
+            // Preview
             const reader = new FileReader();
             reader.onload = (ev) => {
-                // Kita tidak simpan ini, hanya untuk preview
                 document.getElementById('caption-modal').classList.remove('hidden');
             };
             reader.readAsDataURL(file);
-            // Reset input file agar bisa pilih file yang sama jika batal
             e.target.value = ''; 
         }
 
         window.confirmUpload = async () => {
             if (!currentFileToUpload) return;
             
-            // Cek API Key ImgBB
-            if (!imgbbApiKey) {
-                alert("PENTING: Anda belum memasukkan API Key ImgBB di kode program.\nSilakan daftar gratis di api.imgbb.com dan masukkan kodenya di baris 29.");
-                return;
-            }
-
             const btnConfirm = document.getElementById('btn-confirm-upload');
             const btnCancel = document.getElementById('btn-cancel-upload');
             const originalText = btnConfirm.innerHTML;
 
-            // UI Loading
-            btnConfirm.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Mengupload ke Server...`;
+            btnConfirm.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Proses...`;
             btnConfirm.disabled = true;
             btnConfirm.classList.add('opacity-70', 'cursor-not-allowed');
             btnCancel.disabled = true;
-            lucide.createIcons();
+            if (typeof lucide !== 'undefined') lucide.createIcons();
 
             try {
                 // 1. Upload ke ImgBB
@@ -305,16 +413,16 @@
                 const result = await response.json();
                 
                 if (!result.success) {
-                    throw new Error(result.error ? result.error.message : "Gagal upload ke ImgBB");
+                    throw new Error("ImgBB Error: " + (result.error ? result.error.message : "Gagal Upload"));
                 }
 
-                const imageUrl = result.data.url; // URL Publik gambar
+                const imageUrl = result.data.url;
 
                 // 2. Simpan URL ke Firebase
                 const caption = document.getElementById('temp-caption').value || "Dokumentasi";
                 const newImg = { 
                     id: Date.now(), 
-                    url: imageUrl, // Simpan URL, bukan Base64!
+                    url: imageUrl, 
                     caption: caption, 
                     date: new Date().toLocaleDateString('id-ID') 
                 };
@@ -325,11 +433,12 @@
                 await window.saveDataToBackend('gallery', arr);
                 
                 // Sukses
-                cancelUpload();
+                window.cancelUpload();
                 resetUploadBtn(btnConfirm, btnCancel, originalText);
 
             } catch (error) {
-                alert("Terjadi kesalahan: " + error.message);
+                console.error(error);
+                alert("GAGAL: " + error.message);
                 resetUploadBtn(btnConfirm, btnCancel, originalText);
             }
         }
@@ -347,87 +456,10 @@
             currentFileToUpload = null;
         }
 
-        initApp();
-    </script>
+        // --- INIT ---
+        window.initApp();
 
-    <!-- Fonts & Style -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
-    <style>
-        body { font-family: 'Inter', sans-serif; }
-        .font-mono { font-family: 'JetBrains Mono', monospace; }
-        .animate-fade-in { animation: fadeIn 0.5s ease-in; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-        .snap-x { scroll-snap-type: x mandatory; }
-        .snap-center { scroll-snap-align: center; }
-        .scrollbar-hide::-webkit-scrollbar { display: none; }
-        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
-        
-        /* CSS KHUSUS PRINT */
-        @media print {
-            body { background: white !important; color: black !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-            .no-print, header button, .fixed, .sticky, button, form { display: none !important; }
-            
-            /* Header Reset */
-            header { padding-top: 20px !important; padding-bottom: 20px !important; background: none !important; color: black !important; border-bottom: 2px solid #000; }
-            header .text-indigo-100 { color: #555 !important; }
-            header .bg-yellow-400 { background: none !important; color: black !important; border: 1px solid #000; }
-            
-            /* Container Reset */
-            .container { max-width: 100% !important; margin-top: 0 !important; padding: 0 !important; }
-            .shadow-xl, .shadow-sm { box-shadow: none !important; border: 1px solid #ddd !important; }
-            
-            /* Progress Bars */
-            .bg-slate-100 { background-color: #eee !important; }
-            #money-bar, #item-bar { background-color: #555 !important; -webkit-print-color-adjust: exact; }
-            
-            /* Table */
-            table { width: 100%; border-collapse: collapse; page-break-inside: avoid; }
-            th, td { border: 1px solid #000; padding: 8px; }
-            
-            /* GALLERY PRINT LAYOUT (Grid System) */
-            #gallery-carousel {
-                display: grid !important;
-                grid-template-columns: repeat(2, 1fr) !important;
-                gap: 15px !important;
-                overflow: visible !important;
-                padding: 0 !important;
-                margin-top: 20px !important;
-            }
-            .gallery-item {
-                min-width: auto !important;
-                aspect-ratio: auto !important;
-                border: 1px solid #ccc !important;
-                display: flex !important;
-                flex-direction: column !important;
-                break-inside: avoid !important;
-                page-break-inside: avoid !important;
-                background: white !important;
-            }
-            .gallery-item img {
-                width: 100% !important;
-                height: 200px !important;
-                object-fit: cover !important;
-            }
-            
-            /* CAPTION FIX FOR PRINT */
-            .gallery-caption {
-                position: static !important; /* Pindah ke bawah, bukan numpuk */
-                background: none !important; /* Hapus gradasi hitam */
-                color: black !important;
-                padding: 8px !important;
-                border-top: 1px solid #eee !important;
-            }
-            .gallery-caption p.text-white {
-                color: black !important; /* Ubah teks putih jadi hitam */
-                font-weight: bold !important;
-            }
-            .gallery-caption p.text-slate-300 {
-                color: #555 !important; /* Ubah teks abu terang jadi abu gelap */
-            }
-            
-            footer { display: none; }
-        }
-    </style>
+    </script>
 </head>
 <body class="bg-slate-50 text-slate-800 flex flex-col min-h-screen">
 
@@ -442,7 +474,7 @@
                     <img src="https://i.ibb.co.com/KxWySDqp/logo-cpi.png" alt="Logo" class="w-12 h-12 rounded-full border-2 border-white shadow-md">
                     <div class="text-left">
                         <h2 class="text-lg font-bold leading-tight">Yayasan Cakrawala Peduli Indonesia</h2>
-                        <p class="text-xs text-indigo-200">Program Kemanusiaan</p>
+                        <p class="text-xs text-indigo-200">Program Kemanusiaan Sawang</p>
                     </div>
                 </div>
                 <!-- PRINT BUTTON (Desktop) -->
@@ -455,20 +487,20 @@
                 <div class="inline-flex items-center gap-2 bg-yellow-400 text-yellow-900 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider mb-4 shadow-lg">
                     <i data-lucide="sparkles" class="w-3 h-3"></i> Intervensi Krueng Mane
                 </div>
-                <h1 class="text-2xl md:text-4xl font-extrabold mb-4 leading-tight">Program Bantuan CPI - Tahap 2</h1>
+                <h1 class="text-2xl md:text-4xl font-extrabold mb-4 leading-tight">Program Bantuan Sawang - Tahap 2</h1>
                 <p class="text-indigo-100 text-lg mb-6">
                     Yayasan Cakrawala Peduli Indonesia<br>
-                    <span class="text-base opacity-90 block mt-1">Fokus: Pendidikan & Jumat Berkah di Camp Krueng Mane</span>
+                    <span class="text-base opacity-90 block mt-1">Fokus: Pendidikan & Gizi di Camp Krueng Mane</span>
                 </p>
                 
                 <div class="flex flex-wrap gap-4 justify-center no-print">
-                    <button onclick="scrollToId('donate-money')" class="bg-white text-indigo-700 px-6 py-3 rounded-xl font-bold text-sm shadow-xl hover:bg-indigo-50 transition transform hover:-translate-y-1 flex items-center gap-2">
+                    <button onclick="window.scrollToId('donate-money')" class="bg-white text-indigo-700 px-6 py-3 rounded-xl font-bold text-sm shadow-xl hover:bg-indigo-50 transition transform hover:-translate-y-1 flex items-center gap-2">
                         <i data-lucide="coins" class="w-4 h-4"></i> Donasi Uang
                     </button>
-                    <button onclick="scrollToId('donate-goods')" class="bg-transparent border-2 border-white/30 text-white px-6 py-3 rounded-xl font-bold text-sm hover:bg-white/10 transition transform hover:-translate-y-1 flex items-center gap-2">
+                    <button onclick="window.scrollToId('donate-goods')" class="bg-transparent border-2 border-white/30 text-white px-6 py-3 rounded-xl font-bold text-sm hover:bg-white/10 transition transform hover:-translate-y-1 flex items-center gap-2">
                         <i data-lucide="shirt" class="w-4 h-4"></i> Kirim Barang
                     </button>
-                    <button onclick="scrollToId('donate-money')" class="bg-emerald-500 text-white px-6 py-3 rounded-xl font-bold text-sm shadow-xl hover:bg-emerald-600 transition transform hover:-translate-y-1 flex items-center gap-2">
+                    <button onclick="window.scrollToId('donate-money')" class="bg-emerald-500 text-white px-6 py-3 rounded-xl font-bold text-sm shadow-xl hover:bg-emerald-600 transition transform hover:-translate-y-1 flex items-center gap-2">
                         <i data-lucide="heart-handshake" class="w-4 h-4"></i> Jumat Berkah
                     </button>
                 </div>
@@ -484,7 +516,7 @@
                     <i data-lucide="target" class="w-6 h-6 text-red-500"></i> Target Terkini
                 </h2>
                 <!-- Admin Edit Trigger -->
-                <button onclick="toggleAdminPanel()" class="text-slate-300 hover:text-slate-600 no-print" title="Admin Menu">
+                <button onclick="window.toggleAdminPanel()" class="text-slate-300 hover:text-slate-600 no-print" title="Admin Menu">
                     <i data-lucide="settings" class="w-4 h-4"></i>
                 </button>
             </div>
@@ -522,7 +554,7 @@
     <!-- MAIN CONTENT -->
     <main class="flex-grow container mx-auto px-4 py-12 max-w-3xl space-y-12">
 
-        <!-- NARASI PROGRAM (Inserted Here) -->
+        <!-- NARASI PROGRAM -->
         <section class="bg-white p-6 md:p-8 rounded-2xl shadow-sm border border-indigo-100 relative overflow-hidden">
             <div class="absolute top-0 right-0 w-24 h-24 bg-indigo-50 rounded-bl-full -mr-6 -mt-6"></div>
             
@@ -594,7 +626,7 @@
                 <h3 class="text-lg font-bold text-slate-800 flex items-center gap-2">
                     <i data-lucide="list-checks" class="w-5 h-5 text-indigo-600"></i> Rincian Kebutuhan
                 </h3>
-                <button onclick="toggleNeedsEdit()" class="text-xs text-indigo-600 font-bold hover:bg-indigo-50 px-2 py-1 rounded no-print">
+                <button onclick="window.toggleNeedsEdit()" class="text-xs text-indigo-600 font-bold hover:bg-indigo-50 px-2 py-1 rounded no-print">
                     <i data-lucide="edit-3" class="w-3 h-3 inline"></i> Edit Rincian
                 </button>
             </div>
@@ -628,33 +660,33 @@
                 <h4 class="font-bold text-sm mb-3">Edit Daftar Kebutuhan</h4>
                 <div id="needs-edit-container" class="space-y-3"></div>
                 <div class="mt-4 flex gap-2">
-                    <button onclick="addNeedItem()" class="bg-white border text-slate-600 px-3 py-2 rounded text-xs hover:bg-slate-100 font-bold">+ Tambah Baris</button>
-                    <button onclick="saveNeeds()" class="bg-indigo-600 text-white px-4 py-2 rounded text-xs hover:bg-indigo-700 font-bold ml-auto">Simpan Perubahan</button>
+                    <button onclick="window.addNeedItem()" class="bg-white border text-slate-600 px-3 py-2 rounded text-xs hover:bg-slate-100 font-bold">+ Tambah Baris</button>
+                    <button onclick="window.saveNeeds()" class="bg-indigo-600 text-white px-4 py-2 rounded text-xs hover:bg-indigo-700 font-bold ml-auto">Simpan Perubahan</button>
                 </div>
             </div>
         </section>
 
-        <!-- EVIDEN CAROUSEL (NEW FEATURE) -->
+        <!-- EVIDEN CAROUSEL -->
         <section class="break-inside-avoid">
             <div class="flex justify-between items-center mb-3 px-2">
                 <h3 class="text-lg font-bold text-slate-800 flex items-center gap-2"><i data-lucide="camera" class="w-5 h-5 text-indigo-600"></i> Dokumentasi & Bukti</h3>
                 <label class="cursor-pointer text-indigo-600 text-xs font-bold hover:underline no-print">
                     + Upload Foto
-                    <input type="file" accept="image/*" class="hidden" onchange="handleImageUpload(event)">
+                    <input type="file" accept="image/*" class="hidden" onchange="window.handleImageUpload(event)">
                 </label>
             </div>
             
             <div class="relative group">
                 <div id="gallery-carousel" class="flex overflow-x-auto gap-4 py-2 snap-x scrollbar-hide scroll-smooth"></div>
                 <!-- Nav Arrows (Desktop) -->
-                <button onclick="scrollGallery(-1)" class="absolute left-0 top-1/2 -translate-y-1/2 bg-white/80 p-2 rounded-full shadow-lg hover:bg-white hidden md:block no-print"><i data-lucide="chevron-left" class="w-5 h-5"></i></button>
-                <button onclick="scrollGallery(1)" class="absolute right-0 top-1/2 -translate-y-1/2 bg-white/80 p-2 rounded-full shadow-lg hover:bg-white hidden md:block no-print"><i data-lucide="chevron-right" class="w-5 h-5"></i></button>
+                <button onclick="window.scrollGallery(-1)" class="absolute left-0 top-1/2 -translate-y-1/2 bg-white/80 p-2 rounded-full shadow-lg hover:bg-white hidden md:block no-print"><i data-lucide="chevron-left" class="w-5 h-5"></i></button>
+                <button onclick="window.scrollGallery(1)" class="absolute right-0 top-1/2 -translate-y-1/2 bg-white/80 p-2 rounded-full shadow-lg hover:bg-white hidden md:block no-print"><i data-lucide="chevron-right" class="w-5 h-5"></i></button>
             </div>
         </section>
 
         <!-- ACTION SECTIONS -->
         <div class="grid md:grid-cols-2 gap-6 no-print">
-            <!-- MONEY (UPDATED TO BRI - JUMAT BERKAH) -->
+            <!-- MONEY -->
             <div id="donate-money" class="bg-emerald-50 p-6 rounded-xl border-2 border-emerald-200 hover:border-emerald-400 transition shadow-sm group">
                 <div class="bg-emerald-100 w-12 h-12 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition">
                     <i data-lucide="heart-handshake" class="w-6 h-6 text-emerald-600"></i>
@@ -668,7 +700,7 @@
                     <div class="text-xs text-slate-400 uppercase font-bold">Bank BRI</div>
                     <div class="text-xl font-mono font-bold text-slate-800 tracking-wider">2200 0100 0302 301</div>
                     <div class="text-xs text-slate-500 mt-1">an Yayasan Cakrawala Peduli Indonesia</div>
-                    <button onclick="copyRek()" class="text-xs text-emerald-600 font-bold mt-2 hover:underline flex items-center justify-center gap-1 w-full"><i data-lucide="copy" class="w-3 h-3"></i> Salin Nomor</button>
+                    <button onclick="window.copyRek()" class="text-xs text-emerald-600 font-bold mt-2 hover:underline flex items-center justify-center gap-1 w-full"><i data-lucide="copy" class="w-3 h-3"></i> Salin Nomor</button>
                 </div>
                 <a href="https://wa.me/6281392047146?text=Halo,%20saya%20ingin%20konfirmasi%20donasi%20Jumat%20Berkah%20ke%20BRI%20sebesar:" target="_blank" class="block w-full bg-emerald-600 hover:bg-emerald-700 text-white text-center py-3 rounded-lg font-bold text-sm transition no-print">Konfirmasi Transfer</a>
             </div>
@@ -695,7 +727,7 @@
         <section>
             <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
                 <h3 class="font-bold text-slate-800 mb-4 flex items-center gap-2"><i data-lucide="message-square" class="w-5 h-5 text-slate-400"></i> Dukungan Masuk</h3>
-                <form onsubmit="submitSupport(event)" class="mb-6 flex gap-2 no-print">
+                <form onsubmit="window.submitSupport(event)" class="mb-6 flex gap-2 no-print">
                     <input type="text" id="donor-name" placeholder="Nama" class="w-1/3 border p-2 rounded text-sm bg-slate-50">
                     <input type="text" id="donor-msg" placeholder="Pesan semangat..." class="flex-grow border p-2 rounded text-sm bg-slate-50">
                     <select id="donor-type" class="border p-2 rounded text-sm bg-slate-50">
@@ -709,7 +741,7 @@
 
     </main>
 
-    <!-- FLOATING BOTTOM BAR (Share & Print) -->
+    <!-- FLOATING BOTTOM BAR -->
     <div class="fixed bottom-0 left-0 w-full bg-white border-t p-3 z-50 no-print shadow-[0_-5px_15px_rgba(0,0,0,0.1)]">
         <div class="flex justify-between items-center max-w-4xl mx-auto">
             <!-- Connection Status -->
@@ -718,7 +750,7 @@
             </div>
             
             <div class="flex gap-2">
-                <button onclick="shareSocial('wa')" class="bg-green-500 hover:bg-green-600 text-white px-3 py-2 rounded-lg font-bold text-xs flex items-center gap-1">
+                <button onclick="window.shareSocial('wa')" class="bg-green-500 hover:bg-green-600 text-white px-3 py-2 rounded-lg font-bold text-xs flex items-center gap-1">
                     <i data-lucide="message-circle" class="w-3 h-3"></i> WA
                 </button>
                 <button onclick="window.print()" class="bg-slate-800 hover:bg-slate-900 text-white px-3 py-2 rounded-lg font-bold text-xs flex items-center gap-1">
@@ -735,8 +767,8 @@
             <h4 class="font-bold mb-2">Keterangan Foto</h4>
             <input type="text" id="temp-caption" class="w-full border p-2 rounded mb-4 text-sm">
             <div class="flex justify-end gap-2">
-                <button onclick="cancelUpload()" class="px-4 py-2 text-sm text-slate-500 hover:text-slate-800" id="btn-cancel-upload">Batal</button>
-                <button onclick="confirmUpload()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm font-bold transition flex items-center gap-2" id="btn-confirm-upload">
+                <button onclick="window.cancelUpload()" class="px-4 py-2 text-sm text-slate-500 hover:text-slate-800" id="btn-cancel-upload">Batal</button>
+                <button onclick="window.confirmUpload()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm font-bold transition flex items-center gap-2" id="btn-confirm-upload">
                     <span>Upload</span>
                 </button>
             </div>
@@ -750,14 +782,14 @@
             <div class="mb-4">
                 <label class="text-xs font-bold block mb-1">Tambah Uang (Rp)</label>
                 <input type="number" id="admin-add-money" class="w-full border p-2 rounded" placeholder="Contoh: 100000">
-                <button onclick="adminUpdate('money')" class="w-full bg-green-100 text-green-700 font-bold mt-2 py-1 rounded text-xs hover:bg-green-200">+ Input Uang</button>
+                <button onclick="window.adminUpdate('money')" class="w-full bg-green-100 text-green-700 font-bold mt-2 py-1 rounded text-xs hover:bg-green-200">+ Input Uang</button>
             </div>
             <div class="mb-4">
                 <label class="text-xs font-bold block mb-1">Tambah Barang (Pcs)</label>
                 <input type="number" id="admin-add-item" class="w-full border p-2 rounded" placeholder="Contoh: 5">
-                <button onclick="adminUpdate('goods')" class="w-full bg-blue-100 text-blue-700 font-bold mt-2 py-1 rounded text-xs hover:bg-blue-200">+ Input Barang</button>
+                <button onclick="window.adminUpdate('goods')" class="w-full bg-blue-100 text-blue-700 font-bold mt-2 py-1 rounded text-xs hover:bg-blue-200">+ Input Barang</button>
             </div>
-            <button onclick="toggleAdminPanel()" class="w-full border py-2 rounded text-xs text-slate-500">Tutup</button>
+            <button onclick="window.toggleAdminPanel()" class="w-full border py-2 rounded text-xs text-slate-500">Tutup</button>
         </div>
     </div>
 
@@ -766,195 +798,11 @@
         <p>&copy; 2026 Yayasan Cakrawala Peduli Indonesia. Program Bantuan Krueng Mane.</p>
     </footer>
 
-    <!-- LOGIC -->
+    <!-- Init Icon (Backup) -->
     <script>
-        function scrollToId(id) { document.getElementById(id).scrollIntoView({behavior: 'smooth'}); }
-        
-        function copyRek() { 
-            navigator.clipboard.writeText('220001000302301'); 
-            alert('Nomor Rekening BRI Tersalin!'); 
-        }
-        
-        function toggleAdminPanel() { document.getElementById('admin-modal').classList.toggle('hidden'); }
-
-        function shareSocial(type) {
-            const url = encodeURIComponent(window.location.href);
-            const text = encodeURIComponent("Bantu donasi seragam sekolah & makanan untuk korban banjir Krueng Mane:");
-            if(type === 'wa') window.open(`https://wa.me/?text=${text}%20${url}`);
-            if(type === 'fb') window.open(`https://www.facebook.com/sharer/sharer.php?u=${url}`);
-        }
-
-        function adminUpdate(type) {
-            const id = type === 'money' ? 'admin-add-money' : 'admin-add-item';
-            const val = document.getElementById(id).value;
-            if(val) window.addDonation(val, type).then(() => alert('Data Updated!'));
-            document.getElementById(id).value = '';
-        }
-
-        function submitSupport(e) {
-            e.preventDefault();
-            const name = document.getElementById('donor-name').value || 'Hamba Allah';
-            const msg = document.getElementById('donor-msg').value;
-            const type = document.getElementById('donor-type').value;
-            if(msg) window.addDonorMessage(name, msg, type).then(() => { document.getElementById('donor-msg').value = ''; alert('Terkirim!'); });
-        }
-
-        // --- NEEDS EDIT LOGIC ---
-        function toggleNeedsEdit() {
-            const view = document.getElementById('needs-view');
-            const edit = document.getElementById('needs-edit');
-            if(edit.classList.contains('hidden')) {
-                view.classList.add('hidden');
-                edit.classList.remove('hidden');
-                renderNeedsEditInputs();
-            } else {
-                view.classList.remove('hidden');
-                edit.classList.add('hidden');
-            }
-        }
-
-        function renderNeedsEditInputs() {
-            const list = window.appState.needsList || [];
-            document.getElementById('needs-edit-container').innerHTML = list.map((item, i) => `
-                <div class="bg-white p-3 border rounded relative">
-                    <button onclick="window.deleteNeedItem(${i})" class="absolute top-2 right-2 text-red-500 p-1"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
-                    <div class="grid grid-cols-1 gap-2">
-                        <input id="ni-${i}" value="${item.item}" class="border-b text-sm font-bold w-full p-1" placeholder="Nama Barang">
-                        <div class="flex gap-2">
-                            <input type="number" id="nq-${i}" value="${item.qty}" class="border-b text-sm w-1/2 p-1" placeholder="Qty">
-                            <input type="number" id="np-${i}" value="${item.unitPrice}" class="border-b text-sm w-1/2 p-1" placeholder="Harga Satuan">
-                        </div>
-                    </div>
-                </div>
-            `).join('');
-            lucide.createIcons();
-        }
-
-        function addNeedItem() {
-            // Capture inputs first
-            const currentList = (window.appState.needsList || []).map((item, i) => ({
-                item: document.getElementById(`ni-${i}`) ? document.getElementById(`ni-${i}`).value : item.item,
-                qty: document.getElementById(`nq-${i}`) ? Number(document.getElementById(`nq-${i}`).value) : item.qty,
-                unitPrice: document.getElementById(`np-${i}`) ? Number(document.getElementById(`np-${i}`).value) : item.unitPrice
-            }));
-            currentList.push({ item: "Barang Baru", qty: 1, unitPrice: 0 });
-            window.appState.needsList = currentList;
-            renderNeedsEditInputs();
-        }
-
-        function saveNeeds() {
-            const newList = (window.appState.needsList || []).map((old, i) => {
-                const qty = Number(document.getElementById(`nq-${i}`).value);
-                const price = Number(document.getElementById(`np-${i}`).value);
-                return {
-                    item: document.getElementById(`ni-${i}`).value,
-                    qty: qty,
-                    unitPrice: price,
-                    total: qty * price
-                };
-            });
-            window.saveDataToBackend('needsList', newList);
-            toggleNeedsEdit();
-        }
-
-        // CAROUSEL LOGIC
-        function scrollGallery(dir) { document.getElementById('gallery-carousel').scrollBy({ left: dir * 300, behavior: 'smooth' }); }
-        
-        // --- NEW IMAGE UPLOAD LOGIC (IMGBB) ---
-        let currentFileToUpload = null;
-
-        window.handleImageUpload = (e) => {
-            const file = e.target.files[0];
-            if (!file) return;
-            
-            currentFileToUpload = file;
-            // Tampilkan preview sementara di modal (lokal)
-            const reader = new FileReader();
-            reader.onload = (ev) => {
-                // Kita tidak simpan ini, hanya untuk preview
-                document.getElementById('caption-modal').classList.remove('hidden');
-            };
-            reader.readAsDataURL(file);
-            // Reset input file agar bisa pilih file yang sama jika batal
-            e.target.value = ''; 
-        }
-
-        window.confirmUpload = async () => {
-            if (!currentFileToUpload) return;
-            
-            // Cek API Key ImgBB
-            if (!imgbbApiKey) {
-                alert("PENTING: Anda belum memasukkan API Key ImgBB di kode program.\nSilakan daftar gratis di api.imgbb.com dan masukkan kodenya di baris 29.");
-                return;
-            }
-
-            const btnConfirm = document.getElementById('btn-confirm-upload');
-            const btnCancel = document.getElementById('btn-cancel-upload');
-            const originalText = btnConfirm.innerHTML;
-
-            // UI Loading
-            btnConfirm.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Mengupload ke Server...`;
-            btnConfirm.disabled = true;
-            btnConfirm.classList.add('opacity-70', 'cursor-not-allowed');
-            btnCancel.disabled = true;
-            lucide.createIcons();
-
-            try {
-                // 1. Upload ke ImgBB
-                const formData = new FormData();
-                formData.append("image", currentFileToUpload);
-                
-                const response = await fetch(`https://api.imgbb.com/1/upload?key=${imgbbApiKey}`, {
-                    method: "POST",
-                    body: formData
-                });
-                
-                const result = await response.json();
-                
-                if (!result.success) {
-                    throw new Error(result.error ? result.error.message : "Gagal upload ke ImgBB");
-                }
-
-                const imageUrl = result.data.url; // URL Publik gambar
-
-                // 2. Simpan URL ke Firebase
-                const caption = document.getElementById('temp-caption').value || "Dokumentasi";
-                const newImg = { 
-                    id: Date.now(), 
-                    url: imageUrl, // Simpan URL, bukan Base64!
-                    caption: caption, 
-                    date: new Date().toLocaleDateString('id-ID') 
-                };
-                
-                const arr = window.appState.gallery || []; 
-                arr.unshift(newImg);
-                
-                await window.saveDataToBackend('gallery', arr);
-                
-                // Sukses
-                cancelUpload();
-                resetUploadBtn(btnConfirm, btnCancel, originalText);
-
-            } catch (error) {
-                alert("Terjadi kesalahan: " + error.message);
-                resetUploadBtn(btnConfirm, btnCancel, originalText);
-            }
-        }
-
-        function resetUploadBtn(btnConfirm, btnCancel, originalText) {
-            btnConfirm.innerHTML = "Upload";
-            btnConfirm.disabled = false;
-            btnConfirm.classList.remove('opacity-70', 'cursor-not-allowed');
-            btnCancel.disabled = false;
-        }
-
-        window.cancelUpload = () => { 
-            document.getElementById('caption-modal').classList.add('hidden'); 
-            document.getElementById('temp-caption').value = ''; 
-            currentFileToUpload = null;
-        }
-
-        document.addEventListener('DOMContentLoaded', () => { lucide.createIcons(); });
+        document.addEventListener('DOMContentLoaded', () => {
+            if (typeof lucide !== 'undefined') lucide.createIcons();
+        });
     </script>
 </body>
 </html>
