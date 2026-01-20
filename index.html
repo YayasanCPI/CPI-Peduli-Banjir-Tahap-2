@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Program Bantuan Krueng Mane</title>
+    <title>Program Bantuan Krueng Mane & Sanitasi Aceh</title>
     
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -28,7 +28,6 @@
         };
 
         const imgbbApiKey = "d2bc6a4ae014ca59acf3ed7ee32a9173";
-        // URL Google Script Anda
         const googleScriptUrl = "https://script.google.com/macros/s/AKfycbzGEElJoDh8Js1Ti1o_28zrHJlenPabwgk2VxnlWq7d6CQe13geCH2uwk3lE6Py6f_wJw/exec";
 
         let db, auth, docRef;
@@ -51,18 +50,124 @@
             if(el) el.classList.toggle('hidden'); 
         }
 
-        window.shareSocial = (type) => {
-            const url = encodeURIComponent(window.location.href);
-            const text = encodeURIComponent("Bantu donasi seragam sekolah & makanan untuk korban banjir Krueng Mane:");
-            if(type === 'wa') window.open(`https://wa.me/?text=${text}%20${url}`);
-            if(type === 'fb') window.open(`https://www.facebook.com/sharer/sharer.php?u=${url}`);
+        // --- UPDATE KEUANGAN ADMIN ---
+        window.handleTransaction = async () => {
+            const type = document.getElementById('trans-type').value; 
+            const amount = parseInt(document.getElementById('trans-amount').value) || 0;
+            const desc = document.getElementById('trans-desc').value;
+
+            if (!amount && type !== 'set_money' && type !== 'set_target') {
+                alert("Mohon isi jumlah.");
+                return;
+            }
+
+            const newTrans = {
+                id: Date.now(),
+                date: new Date().toLocaleDateString('id-ID'),
+                type: type,
+                amount: amount,
+                desc: desc || "Update Manual Admin"
+            };
+
+            try {
+                // Logika Update Berdasarkan Tipe
+                if (type === 'goods') {
+                    const currentItems = window.appState.currentItems || 0;
+                    await updateDoc(docRef, { 
+                        currentItems: currentItems + amount,
+                        transactions: arrayUnion(newTrans) 
+                    });
+                } 
+                else if (type === 'in') {
+                    const currentMoney = window.appState.currentMoney || 0;
+                    await updateDoc(docRef, { 
+                        currentMoney: currentMoney + amount,
+                        transactions: arrayUnion(newTrans) 
+                    });
+                } 
+                else if (type === 'out') {
+                    const spentMoney = window.appState.spentMoney || 0;
+                    await updateDoc(docRef, { 
+                        spentMoney: spentMoney + amount,
+                        transactions: arrayUnion(newTrans) 
+                    });
+                }
+                else if (type === 'set_money') {
+                    await updateDoc(docRef, { 
+                        currentMoney: amount,
+                        spentMoney: 0, 
+                        transactions: arrayUnion(newTrans) 
+                    });
+                }
+                else if (type === 'set_target') {
+                    await updateDoc(docRef, { targetMoney: amount });
+                }
+
+                alert("Data Berhasil Diperbarui!");
+                document.getElementById('trans-amount').value = '';
+                document.getElementById('trans-desc').value = '';
+            } catch (e) {
+                console.error(e);
+                alert("Gagal update: " + e.message);
+            }
         }
 
-        window.adminUpdate = (type) => {
-            const id = type === 'money' ? 'admin-add-money' : 'admin-add-item';
-            const val = document.getElementById(id).value;
-            if(val) window.addDonation(val, type).then(() => alert('Data Updated!'));
-            document.getElementById(id).value = '';
+        // --- FITUR HAPUS TRANSAKSI (BARU) ---
+        window.deleteTransaction = async (id) => {
+            if(!confirm("Yakin hapus transaksi ini? Saldo akan disesuaikan otomatis.")) return;
+
+            try {
+                const data = window.appState;
+                const txList = data.transactions || [];
+                const txToDelete = txList.find(t => t.id === id);
+                
+                if (!txToDelete) {
+                    alert("Transaksi tidak ditemukan.");
+                    return;
+                }
+
+                // Kalkulasi balik saldo (Reverse Calculation)
+                let updates = {};
+                const amount = Number(txToDelete.amount);
+                
+                if (txToDelete.type === 'in') {
+                    updates.currentMoney = (data.currentMoney || 0) - amount;
+                } else if (txToDelete.type === 'out') {
+                    updates.spentMoney = (data.spentMoney || 0) - amount;
+                } else if (txToDelete.type === 'goods') {
+                    updates.currentItems = (data.currentItems || 0) - amount;
+                }
+                // Untuk tipe set_money/target, kita hanya hapus log-nya, tidak merubah nilai saat ini karena sifatnya absolut
+                
+                // Hapus dari array
+                const newTxList = txList.filter(t => t.id !== id);
+                updates.transactions = newTxList;
+
+                await updateDoc(docRef, updates);
+                alert("Transaksi berhasil dihapus dan saldo disesuaikan.");
+                
+            } catch (e) {
+                console.error(e);
+                alert("Gagal menghapus: " + e.message);
+            }
+        }
+
+        window.addTransaction = async (trans) => {
+            if (!useLocalStorage) {
+                await updateDoc(docRef, { transactions: arrayUnion(trans) });
+            } else {
+                let d = getLocal();
+                if (!d.transactions) d.transactions = [];
+                d.transactions.unshift(trans);
+                saveLocal(d);
+            }
+        }
+
+        window.shareSocial = (type) => {
+            const url = encodeURIComponent(window.location.href);
+            const text = encodeURIComponent("Pantau transparansi dana bantuan korban banjir Aceh disini:");
+            if(type === 'wa') window.open(`https://wa.me/?text=${text}%20${url}`);
+            if(type === 'fb') window.open(`https://www.facebook.com/sharer/sharer.php?u=${url}`);
         }
 
         window.submitSupport = (e) => {
@@ -73,27 +178,22 @@
             if(msg) window.addDonorMessage(name, msg, type).then(() => { document.getElementById('donor-msg').value = ''; alert('Terkirim!'); });
         }
 
-        // --- LIGHTBOX FUNCTIONS (POP-UP GAMBAR) ---
-        
+        // --- LIGHTBOX ---
         window.openLightbox = (url, caption) => {
             const modal = document.getElementById('lightbox-modal');
             const img = document.getElementById('lightbox-img');
             const cap = document.getElementById('lightbox-caption');
-            
             img.src = url;
             cap.innerText = caption || "";
             modal.classList.remove('hidden');
         }
-
         window.closeLightbox = () => {
             const modal = document.getElementById('lightbox-modal');
             modal.classList.add('hidden');
-            // Clear src to stop memory leak or ghost image
             setTimeout(() => { document.getElementById('lightbox-img').src = ''; }, 300);
         }
 
-        // --- CORE FUNCTIONS ---
-
+        // --- FIREBASE INIT ---
         window.initApp = async function() {
             try {
                 const app = initializeApp(firebaseConfig);
@@ -105,11 +205,6 @@
                 updateConnectionStatus(true);
             } catch (e) {
                 console.error("Error Koneksi:", e);
-                if (e.code === 'auth/admin-restricted-operation' || e.code === 'auth/operation-not-allowed') {
-                    alert("PENTING: Fitur 'Anonymous' belum aktif di Firebase Console.");
-                } else {
-                    console.warn("Masuk Mode Offline:", e.message);
-                }
                 useLocalStorage = true;
                 updateConnectionStatus(false);
                 loadFromLocal();
@@ -120,9 +215,9 @@
             const el = document.getElementById('connection-status');
             if (!el) return;
             if (isOnline) {
-                el.innerHTML = '<span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span> <span class="text-green-700 font-bold">Online (Siap Upload)</span>';
+                el.innerHTML = '<span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span> <span class="text-green-700 font-bold">Online (Transparansi Aktif)</span>';
             } else {
-                el.innerHTML = '<span class="w-2 h-2 rounded-full bg-red-500"></span> <span class="text-red-500 font-bold">Offline (Cek Pengaturan)</span>';
+                el.innerHTML = '<span class="w-2 h-2 rounded-full bg-red-500"></span> <span class="text-red-500 font-bold">Offline</span>';
             }
         }
 
@@ -142,18 +237,19 @@
 
         async function initializeDB() {
             const initialData = {
-                targetMoney: 5000000, 
+                targetMoney: 31600000, 
                 currentMoney: 0,
+                spentMoney: 0, 
                 targetItems: 50, 
                 currentItems: 0,
+                transactions: [], 
                 donors: [
-                    { name: "Sistem", message: "Program Bantuan Krueng Mane Dimulai!", type: "info" }
+                    { name: "Sistem", message: "Program Bantuan Terpadu Dimulai!", type: "info" }
                 ],
                 needsList: [
-                    { item: "Paket Nasi Jumat Berkah (50 Porsi)", qty: 50, unitPrice: 10000, total: 500000 },
-                    { item: "Seragam SD Ukuran 10", qty: 10, unitPrice: 125000, total: 1250000 },
-                    { item: "Seragam SD Ukuran 12", qty: 10, unitPrice: 125000, total: 1250000 },
-                    { item: "Bahan Dapur Umum (Beras/Lauk)", qty: 1, unitPrice: 500000, total: 500000 }
+                    { item: "Paket Nasi Jumat Berkah (250 Porsi)", qty: 250, unitPrice: 10000, total: 2500000 },
+                    { item: "Seragam SD (20 Paket)", qty: 20, unitPrice: 125000, total: 2500000 },
+                    { item: "Unit MCK Semi-Permanen + Sumur", qty: 1, unitPrice: 26600000, total: 26600000 }
                 ]
             };
             
@@ -169,31 +265,11 @@
             }
         }
 
-        // --- UPDATE DATA ---
         window.saveDataToBackend = async (key, data) => { 
             try {
                 if (!useLocalStorage) await updateDoc(docRef, { [key]: data });
                 else { updateLocalData(key, data); }
-            } catch(e) {
-                alert("Gagal menyimpan: " + e.message);
-            }
-        };
-
-        window.addDonation = async (amount, type) => {
-            if (!useLocalStorage) {
-                if(type === 'money') {
-                    const current = window.appState.currentMoney || 0;
-                    await updateDoc(docRef, { currentMoney: current + Number(amount) });
-                } else {
-                    const current = window.appState.currentItems || 0;
-                    await updateDoc(docRef, { currentItems: current + Number(amount) });
-                }
-            } else {
-                let d = getLocal();
-                if(type === 'money') d.currentMoney += Number(amount);
-                else d.currentItems += Number(amount);
-                saveLocal(d);
-            }
+            } catch(e) { alert("Gagal menyimpan: " + e.message); }
         };
 
         window.addDonorMessage = async (name, msg, type) => {
@@ -214,36 +290,82 @@
             const moneyBar = document.getElementById('money-bar');
             if (!moneyBar) return;
 
-            let totalNeedMoney = 0;
-            let totalNeedItems = 0;
-            if (data.needsList) {
-                data.needsList.forEach(item => {
-                    totalNeedMoney += (item.qty * item.unitPrice);
-                    if(item.item.toLowerCase().includes('seragam')) {
-                         totalNeedItems += item.qty;
-                    }
-                });
-            }
-            if (totalNeedItems === 0) totalNeedItems = data.targetItems;
+            // 1. DATA KEUANGAN
+            const totalIn = data.currentMoney || 0;
+            const totalOut = data.spentMoney || 0;
+            const balance = totalIn - totalOut;
+            const targetMoney = data.targetMoney || 31600000;
 
-            const targetMoney = totalNeedMoney || data.targetMoney; 
-            const moneyPercent = Math.min((data.currentMoney / targetMoney) * 100, 100);
+            // Update Progress Bar
+            const moneyPercent = Math.min((balance / targetMoney) * 100, 100);
             document.getElementById('money-bar').style.width = `${moneyPercent}%`;
-            document.getElementById('money-current').innerText = formatRupiah(data.currentMoney);
+            document.getElementById('money-current').innerText = formatRupiah(balance); 
             document.getElementById('money-target').innerText = formatRupiah(targetMoney);
             document.getElementById('money-percent').innerText = `${Math.round(moneyPercent)}%`;
 
-            const targetItems = totalNeedItems;
-            const itemPercent = Math.min((data.currentItems / targetItems) * 100, 100);
+            // Update Financial Summary Cards
+            if(document.getElementById('fin-in')) document.getElementById('fin-in').innerText = formatRupiah(totalIn);
+            if(document.getElementById('fin-out')) document.getElementById('fin-out').innerText = formatRupiah(totalOut);
+            if(document.getElementById('fin-bal')) document.getElementById('fin-bal').innerText = formatRupiah(balance);
+
+            // 2. DATA BARANG
+            const targetItems = data.targetItems || 50;
+            const currentItems = data.currentItems || 0;
+            const itemPercent = Math.min((currentItems / targetItems) * 100, 100);
             document.getElementById('item-bar').style.width = `${itemPercent}%`;
-            document.getElementById('item-current').innerText = `${data.currentItems} Pcs`;
+            document.getElementById('item-current').innerText = `${currentItems} Pcs`;
             document.getElementById('item-target').innerText = `${targetItems} Pcs`;
 
+            // 3. RENDER COMPONENTS
             if(data.needsList) renderNeeds(data.needsList);
             if(data.donors) renderDonors(data.donors);
             if(data.gallery) renderGallery(data.gallery);
+            if(data.transactions) renderTransactions(data.transactions);
             
             if (typeof lucide !== 'undefined') lucide.createIcons();
+        }
+
+        function renderTransactions(list) {
+            const el = document.getElementById('trans-body');
+            if(!el) return;
+            
+            const sorted = [...list].sort((a,b) => b.id - a.id);
+            
+            el.innerHTML = sorted.map(t => {
+                const isOut = t.type === 'out';
+                const isSet = t.type === 'set_money' || t.type === 'set_target';
+                const color = isOut ? 'text-red-600' : (isSet ? 'text-blue-600' : 'text-green-600');
+                let prefix = isOut ? '-' : '+';
+                if(isSet) prefix = '=';
+                
+                if(t.type === 'goods') {
+                    return `
+                    <tr class="border-b border-slate-50 hover:bg-slate-50 text-xs">
+                        <td class="p-3 text-slate-500">${t.date}</td>
+                        <td class="p-3 font-medium text-slate-700">
+                            <span class="bg-blue-100 text-blue-700 px-1 rounded text-[10px] mr-1">Barang</span>
+                            ${t.desc}
+                        </td>
+                        <td class="p-3 text-right font-mono text-blue-600">
+                            +${t.amount} Pcs
+                            <button onclick="window.deleteTransaction(${t.id})" class="ml-2 text-slate-300 hover:text-red-500 transition" title="Hapus"><i data-lucide="trash-2" class="w-3 h-3 inline"></i></button>
+                        </td>
+                    </tr>`;
+                }
+
+                return `
+                <tr class="border-b border-slate-50 hover:bg-slate-50 text-xs">
+                    <td class="p-3 text-slate-500">${t.date}</td>
+                    <td class="p-3 font-medium text-slate-700">
+                        ${isSet ? '<span class="bg-indigo-100 text-indigo-700 px-1 rounded text-[10px] mr-1">Admin</span>' : ''}
+                        ${t.desc}
+                    </td>
+                    <td class="p-3 text-right font-mono font-bold ${color}">
+                        ${prefix} ${formatRupiah(t.amount)}
+                        <button onclick="window.deleteTransaction(${t.id})" class="ml-2 text-slate-300 hover:text-red-500 transition" title="Hapus"><i data-lucide="trash-2" class="w-3 h-3 inline"></i></button>
+                    </td>
+                </tr>`;
+            }).join('');
         }
 
         function renderNeeds(list) {
@@ -289,12 +411,9 @@
             const errorImg = "https://placehold.co/400x300/e2e8f0/64748b?text=Foto+Tidak+Tersedia";
             container.innerHTML = gallery.map(photo => `
                 <div class="gallery-item min-w-[280px] md:min-w-[350px] aspect-video relative rounded-lg overflow-hidden snap-center border bg-slate-200 break-inside-avoid">
-                    
-                    <!-- FOTO DENGAN ONCLICK LIGHTBOX -->
                     <img src="${photo.url}" class="w-full h-full object-cover cursor-zoom-in hover:scale-105 transition duration-300" 
                          onclick="window.openLightbox('${photo.url}', '${photo.caption}')"
                          onerror="this.onerror=null;this.src='${errorImg}'">
-                         
                     <div class="gallery-caption absolute inset-0 bg-gradient-to-t from-black/80 via-transparent flex flex-col justify-end p-3 pointer-events-none">
                         <p class="text-white text-xs font-bold">${photo.caption}</p>
                         <p class="text-slate-300 text-[10px]">${photo.date}</p>
@@ -306,8 +425,6 @@
             `).join('');
             if (typeof lucide !== 'undefined') lucide.createIcons();
         }
-
-        // --- UTILS & EDIT LOGIC ---
 
         window.formatRupiah = (n) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(n);
         
@@ -388,13 +505,10 @@
             document.getElementById('gallery-carousel').scrollBy({ left: dir * 300, behavior: 'smooth' }); 
         }
         
-        // --- IMAGE UPLOAD LOGIC ---
         let currentFileToUpload = null;
-
         window.handleImageUpload = (e) => {
             const file = e.target.files[0];
             if (!file) return;
-            
             currentFileToUpload = file;
             const reader = new FileReader();
             reader.onload = (ev) => {
@@ -406,11 +520,9 @@
 
         window.confirmUpload = async () => {
             if (!currentFileToUpload) return;
-            
             const btnConfirm = document.getElementById('btn-confirm-upload');
             const btnCancel = document.getElementById('btn-cancel-upload');
             const originalText = btnConfirm.innerHTML;
-
             btnConfirm.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Proses...`;
             btnConfirm.disabled = true;
             btnConfirm.classList.add('opacity-70', 'cursor-not-allowed');
@@ -418,62 +530,35 @@
             if (typeof lucide !== 'undefined') lucide.createIcons();
 
             try {
-                // 1. Upload ke ImgBB
                 const formData = new FormData();
                 formData.append("image", currentFileToUpload);
-                
-                const response = await fetch(`https://api.imgbb.com/1/upload?key=${imgbbApiKey}`, {
-                    method: "POST",
-                    body: formData
-                });
-                
+                const response = await fetch(`https://api.imgbb.com/1/upload?key=${imgbbApiKey}`, { method: "POST", body: formData });
                 const result = await response.json();
                 
-                if (!result.success) {
-                    throw new Error("ImgBB Error: " + (result.error ? result.error.message : "Gagal Upload"));
-                }
+                if (!result.success) throw new Error("ImgBB Error: " + (result.error ? result.error.message : "Gagal Upload"));
 
-                // Ambil link standar dari API
                 let imageUrl = result.data.display_url || result.data.url;
-
-                // PERBAIKAN KHUSUS: Paksa ganti domain ke i.ibb.co.com jika domainnya i.ibb.co
                 if (imageUrl.includes("i.ibb.co") && !imageUrl.includes("i.ibb.co.com")) {
                     imageUrl = imageUrl.replace("i.ibb.co", "i.ibb.co.com");
                 }
 
-                // 2. Simpan URL ke Firebase (Tampilan)
                 const caption = document.getElementById('temp-caption').value || "Dokumentasi";
-                const newImg = { 
-                    id: Date.now(), 
-                    url: imageUrl, 
-                    caption: caption, 
-                    date: new Date().toLocaleDateString('id-ID') 
-                };
-                
+                const newImg = { id: Date.now(), url: imageUrl, caption: caption, date: new Date().toLocaleDateString('id-ID') };
                 const arr = window.appState.gallery || []; 
                 arr.unshift(newImg);
                 await window.saveDataToBackend('gallery', arr);
 
-                // 3. Kirim ke Google Sheet (Backup Admin)
                 try {
                     await fetch(googleScriptUrl, {
                         method: 'POST',
                         mode: 'no-cors', 
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            nama: "FOTO: " + caption, 
-                            nominal: imageUrl         // Link yang sudah diperbaiki
-                        })
+                        body: JSON.stringify({ nama: "FOTO: " + caption, nominal: imageUrl })
                     });
-                    console.log("Terkirim ke Google Sheet:", imageUrl);
-                } catch (gsErr) {
-                    console.warn("Gagal simpan ke Sheet:", gsErr);
-                }
+                } catch (gsErr) { console.warn("Gagal simpan ke Sheet:", gsErr); }
                 
-                // Sukses
                 window.cancelUpload();
                 resetUploadBtn(btnConfirm, btnCancel, originalText);
-
             } catch (error) {
                 console.error(error);
                 alert("GAGAL: " + error.message);
@@ -494,9 +579,7 @@
             currentFileToUpload = null;
         }
 
-        // --- INIT ---
         window.initApp();
-
     </script>
 </head>
 <body class="bg-slate-50 text-slate-800 flex flex-col min-h-screen">
@@ -504,42 +587,34 @@
     <!-- HEADER -->
     <header class="bg-gradient-to-br from-indigo-700 to-blue-800 text-white pt-6 pb-32 px-4 relative overflow-hidden">
         <div class="absolute top-0 left-0 w-full h-full opacity-10 bg-[url('https://www.transparenttextures.com/patterns/notebook.png')] no-print"></div>
-        
         <div class="max-w-4xl mx-auto relative z-10">
-            <!-- IDENTITY & PRINT BUTTON ROW -->
             <div class="flex items-center justify-between gap-4 mb-8">
                 <div class="flex items-center gap-3">
                     <img src="https://i.ibb.co.com/KxWySDqp/logo-cpi.png" alt="Logo" class="w-12 h-12 rounded-full border-2 border-white shadow-md">
                     <div class="text-left">
                         <h2 class="text-lg font-bold leading-tight">Yayasan Cakrawala Peduli Indonesia</h2>
-                        <p class="text-xs text-indigo-200">Program Kemanusiaan CPI</p>
+                        <p class="text-xs text-indigo-200">Program Kemanusiaan Terpadu</p>
                     </div>
                 </div>
-                <!-- PRINT BUTTON (Desktop) -->
                 <button onclick="window.print()" class="bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition no-print">
                     <i data-lucide="printer" class="w-4 h-4"></i> Cetak Laporan
                 </button>
             </div>
-
             <div class="text-center max-w-2xl mx-auto">
                 <div class="inline-flex items-center gap-2 bg-yellow-400 text-yellow-900 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider mb-4 shadow-lg">
-                    <i data-lucide="sparkles" class="w-3 h-3"></i> Intervensi Krueng Mane
+                    <i data-lucide="sparkles" class="w-3 h-3"></i> Intervensi Krueng Mane & Pidie Jaya
                 </div>
                 <h1 class="text-2xl md:text-4xl font-extrabold mb-4 leading-tight">Program Bantuan CPI - Tahap 2</h1>
                 <p class="text-indigo-100 text-lg mb-6">
                     Yayasan Cakrawala Peduli Indonesia<br>
-                    <span class="text-base opacity-90 block mt-1">Fokus: Pendidikan & Gizi di Camp Krueng Mane</span>
+                    <span class="text-base opacity-90 block mt-1">Fokus: Pendidikan, Gizi & Sanitasi Air Bersih</span>
                 </p>
-                
                 <div class="flex flex-wrap gap-4 justify-center no-print">
                     <button onclick="window.scrollToId('donate-money')" class="bg-white text-indigo-700 px-6 py-3 rounded-xl font-bold text-sm shadow-xl hover:bg-indigo-50 transition transform hover:-translate-y-1 flex items-center gap-2">
-                        <i data-lucide="coins" class="w-4 h-4"></i> Donasi Uang
+                        <i data-lucide="coins" class="w-4 h-4"></i> Donasi Umum
                     </button>
-                    <button onclick="window.scrollToId('donate-goods')" class="bg-transparent border-2 border-white/30 text-white px-6 py-3 rounded-xl font-bold text-sm hover:bg-white/10 transition transform hover:-translate-y-1 flex items-center gap-2">
-                        <i data-lucide="shirt" class="w-4 h-4"></i> Kirim Barang
-                    </button>
-                    <button onclick="window.scrollToId('donate-money')" class="bg-emerald-500 text-white px-6 py-3 rounded-xl font-bold text-sm shadow-xl hover:bg-emerald-600 transition transform hover:-translate-y-1 flex items-center gap-2">
-                        <i data-lucide="heart-handshake" class="w-4 h-4"></i> Jumat Berkah
+                    <button onclick="window.scrollToId('financial-report')" class="bg-transparent border-2 border-white/30 text-white px-6 py-3 rounded-xl font-bold text-sm hover:bg-white/10 transition transform hover:-translate-y-1 flex items-center gap-2">
+                        <i data-lucide="file-bar-chart" class="w-4 h-4"></i> Laporan Keuangan
                     </button>
                 </div>
             </div>
@@ -553,7 +628,6 @@
                 <h2 class="text-xl font-bold text-slate-800 flex items-center gap-2">
                     <i data-lucide="target" class="w-6 h-6 text-red-500"></i> Target Terkini
                 </h2>
-                <!-- Admin Edit Trigger -->
                 <button onclick="window.toggleAdminPanel()" class="text-slate-300 hover:text-slate-600 no-print" title="Admin Menu">
                     <i data-lucide="settings" class="w-4 h-4"></i>
                 </button>
@@ -562,15 +636,38 @@
             <!-- 1. Money Progress -->
             <div class="mb-8">
                 <div class="flex justify-between text-sm mb-2 font-medium">
-                    <span class="text-slate-600">Dana Terkumpul</span>
+                    <span class="text-slate-600">Saldo Tersedia</span>
                     <span class="text-indigo-600 font-bold" id="money-percent">0%</span>
                 </div>
                 <div class="w-full bg-slate-100 rounded-full h-4 mb-2 overflow-hidden border">
                     <div id="money-bar" class="bg-gradient-to-r from-green-400 to-emerald-500 h-full rounded-full transition-all duration-1000 shadow-[0_0_10px_rgba(16,185,129,0.4)]" style="width: 0%"></div>
                 </div>
-                <div class="flex justify-between items-end">
+                <div class="flex justify-between items-end mb-4">
                     <span id="money-current" class="text-2xl font-mono font-bold text-slate-800">Rp 0</span>
                     <span class="text-xs text-slate-400">Target: <span id="money-target">Rp 0</span></span>
+                </div>
+
+                <!-- Breakdown Targets -->
+                <div class="pt-4 border-t border-slate-100">
+                    <h4 class="text-xs font-bold text-slate-400 uppercase mb-3 tracking-wider">Rincian Target Dana</h4>
+                    <div class="space-y-3">
+                        <div class="flex justify-between items-center text-sm">
+                            <span class="flex items-center gap-2 text-slate-600"><i data-lucide="shirt" class="w-4 h-4 text-orange-500"></i> Seragam SD (20 Pkt)</span>
+                            <span class="font-mono font-bold text-slate-700">Rp 2.500.000</span>
+                        </div>
+                        <div class="flex justify-between items-center text-sm">
+                            <span class="flex items-center gap-2 text-slate-600"><i data-lucide="utensils" class="w-4 h-4 text-emerald-500"></i> Jumat Berkah (250 Porsi)</span>
+                            <span class="font-mono font-bold text-slate-700">Rp 2.500.000</span>
+                        </div>
+                        <div class="flex justify-between items-center text-sm">
+                            <span class="flex items-center gap-2 text-slate-600"><i data-lucide="droplet" class="w-4 h-4 text-blue-500"></i> Sanitasi & Air (1 Unit)</span>
+                            <span class="font-mono font-bold text-slate-700">Rp 26.600.000</span>
+                        </div>
+                        <div class="flex justify-between items-center text-sm pt-2 border-t border-slate-100 mt-2">
+                            <span class="font-bold text-slate-800">Total Kebutuhan</span>
+                            <span class="font-mono font-bold text-indigo-700">Rp 31.600.000</span>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -592,6 +689,49 @@
     <!-- MAIN CONTENT -->
     <main class="flex-grow container mx-auto px-4 py-12 max-w-3xl space-y-12">
 
+        <!-- FINANCIAL REPORT SECTION -->
+        <section id="financial-report" class="scroll-mt-24">
+            <div class="flex items-center gap-3 mb-6">
+                <div class="bg-blue-600 text-white p-2 rounded-lg"><i data-lucide="pie-chart" class="w-6 h-6"></i></div>
+                <div>
+                    <h2 class="text-2xl font-bold text-slate-800">Transparansi Dana</h2>
+                    <p class="text-sm text-slate-500">Laporan pemakaian dana secara terbuka & real-time.</p>
+                </div>
+            </div>
+
+            <!-- Summary Cards -->
+            <div class="grid grid-cols-3 gap-3 mb-6">
+                <div class="bg-green-50 p-4 rounded-xl border border-green-100 text-center">
+                    <div class="text-[10px] uppercase font-bold text-green-600 mb-1">Total Masuk</div>
+                    <div class="text-sm md:text-lg font-bold text-slate-800 font-mono" id="fin-in">Rp 0</div>
+                </div>
+                <div class="bg-red-50 p-4 rounded-xl border border-red-100 text-center">
+                    <div class="text-[10px] uppercase font-bold text-red-600 mb-1">Total Keluar</div>
+                    <div class="text-sm md:text-lg font-bold text-slate-800 font-mono" id="fin-out">Rp 0</div>
+                </div>
+                <div class="bg-blue-50 p-4 rounded-xl border border-blue-100 text-center">
+                    <div class="text-[10px] uppercase font-bold text-blue-600 mb-1">Saldo Bersih</div>
+                    <div class="text-sm md:text-lg font-bold text-slate-800 font-mono" id="fin-bal">Rp 0</div>
+                </div>
+            </div>
+
+            <!-- Transaction Table -->
+            <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                <div class="bg-slate-50 px-4 py-3 border-b border-slate-200 font-bold text-xs text-slate-500 uppercase flex justify-between">
+                    <span>Riwayat Transaksi</span>
+                    <span><i data-lucide="activity" class="w-3 h-3 inline mr-1"></i>Live Update</span>
+                </div>
+                <div class="max-h-80 overflow-y-auto">
+                    <table class="w-full text-left">
+                        <tbody id="trans-body" class="divide-y divide-slate-50">
+                            <!-- Rows injected here -->
+                            <tr><td class="p-4 text-center text-xs text-slate-400">Belum ada transaksi.</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
         <!-- NARASI PROGRAM -->
         <section class="bg-white p-6 md:p-8 rounded-2xl shadow-sm border border-indigo-100 relative overflow-hidden">
             <div class="absolute top-0 right-0 w-24 h-24 bg-indigo-50 rounded-bl-full -mr-6 -mt-6"></div>
@@ -601,13 +741,12 @@
                     <div class="bg-indigo-600 text-white p-2 rounded-lg">
                         <i data-lucide="file-text" class="w-5 h-5"></i>
                     </div>
-                    <h2 class="text-xl font-bold text-slate-800">Intervensi Pendidikan & Gizi</h2>
+                    <h2 class="text-xl font-bold text-slate-800">Fokus Intervensi Utama</h2>
                 </div>
-                
                 <p class="text-slate-600 leading-relaxed mb-6 text-sm md:text-base">
-                    Kami membagi fokus pemulihan korban banjir Sawang menjadi dua sektor vital. Prioritas kami adalah keberlanjutan pendidikan anak dan pemenuhan gizi pengungsi.
+                    Kami membagi fokus pemulihan pascabencana menjadi tiga sektor vital. Prioritas kami adalah pendidikan anak, pemenuhan gizi, dan infrastruktur air bersih yang rusak akibat banjir.
                 </p>
-
+                <!-- Programs Content -->
                 <div class="space-y-6">
                     <!-- Point 1 -->
                     <div class="flex gap-4 items-start">
@@ -615,50 +754,50 @@
                             <span class="font-bold text-sm w-4 h-4 flex items-center justify-center">1</span>
                         </div>
                         <div>
-                            <h3 class="font-bold text-slate-800 text-lg mb-2">Bantuan Seragam Sekolah SD</h3>
+                            <div class="flex flex-wrap items-center gap-2 mb-2">
+                                <h3 class="font-bold text-slate-800 text-lg">Bantuan Seragam Sekolah SD</h3>
+                                <span class="bg-orange-50 text-orange-700 border border-orange-200 text-[10px] font-bold px-2 py-0.5 rounded-full">Target: Rp 2.500.000 (20 Paket)</span>
+                            </div>
                             <p class="text-slate-600 text-sm leading-relaxed">
-                                Banjir merusak fasilitas dan harta benda warga. Banyak siswa kehilangan pakaian sekolah. Kondisi ini menghambat mereka kembali ke ruang kelas. Kami menyediakan paket seragam baru bagi siswa SD terdampak. Langkah ini krusial untuk menjaga semangat belajar dan rutinitas anak di tengah situasi darurat.
+                                Banjir merusak fasilitas dan harta benda warga. Banyak siswa kehilangan pakaian sekolah. Kondisi ini menghambat mereka kembali ke ruang kelas.
                             </p>
                         </div>
                     </div>
-
                     <!-- Point 2 -->
                     <div class="flex gap-4 items-start">
                         <div class="bg-emerald-100 text-emerald-600 p-2 rounded-full shrink-0 mt-1">
                             <span class="font-bold text-sm w-4 h-4 flex items-center justify-center">2</span>
                         </div>
                         <div>
-                            <h3 class="font-bold text-slate-800 text-lg mb-2">Program Jumat Berkah (Dapur Umum)</h3>
+                            <div class="flex flex-wrap items-center gap-2 mb-2">
+                                <h3 class="font-bold text-slate-800 text-lg">Program Jumat Berkah</h3>
+                                <span class="bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-bold px-2 py-0.5 rounded-full">Target: Rp 2.500.000 (250 Porsi)</span>
+                            </div>
                             <p class="text-slate-600 text-sm leading-relaxed mb-3">
                                 Kami menyiapkan makanan siap santap bagi pengungsi khusus di Camp Krueng Mane. Strategi kami mengutamakan efisiensi anggaran tanpa mengurangi kualitas gizi.
                             </p>
-                            <div class="bg-slate-50 p-4 rounded-xl border border-slate-200 grid grid-cols-1 md:grid-cols-3 gap-4">
-                                <div>
-                                    <h4 class="font-bold text-xs text-slate-500 uppercase mb-1">Biaya</h4>
-                                    <p class="text-sm font-bold text-emerald-600">Rp 10.000 / porsi</p>
-                                </div>
-                                <div>
-                                    <h4 class="font-bold text-xs text-slate-500 uppercase mb-1">Eksekusi</h4>
-                                    <p class="text-xs text-slate-700">Belanja bahan segar langsung (beras, lauk, sayur).</p>
-                                </div>
-                                <div>
-                                    <h4 class="font-bold text-xs text-slate-500 uppercase mb-1">Proses</h4>
-                                    <p class="text-xs text-slate-700">Dimasak relawan di lokasi, higienis & hangat.</p>
-                                </div>
-                            </div>
                         </div>
                     </div>
-                </div>
-
-                <div class="mt-6 pt-4 border-t border-slate-100 text-center">
-                    <p class="text-sm font-medium text-indigo-700 italic">
-                        "Pendekatan ini memastikan setiap Rupiah donasi memiliki nilai manfaat maksimal bagi korban."
-                    </p>
+                    <!-- Point 3 -->
+                    <div class="flex gap-4 items-start">
+                        <div class="bg-blue-100 text-blue-600 p-2 rounded-full shrink-0 mt-1">
+                            <span class="font-bold text-sm w-4 h-4 flex items-center justify-center">3</span>
+                        </div>
+                        <div>
+                            <div class="flex flex-wrap items-center gap-2 mb-2">
+                                <h3 class="font-bold text-slate-800 text-lg">Pemulihan Sanitasi & Air</h3>
+                                <span class="bg-blue-50 text-blue-700 border border-blue-200 text-[10px] font-bold px-2 py-0.5 rounded-full">Target: Rp 26.600.000 (1 Unit)</span>
+                            </div>
+                            <p class="text-slate-600 text-sm leading-relaxed mb-3">
+                                Merespons krisis air bersih pascabencana, kami membangun fasilitas MCK Semi-permanen dan Sumur Bor Dalam.
+                            </p>
+                        </div>
+                    </div>
                 </div>
             </div>
         </section>
 
-        <!-- RINCIAN KEBUTUHAN (EDITABLE) -->
+        <!-- RINCIAN KEBUTUHAN -->
         <section>
             <div class="flex justify-between items-center mb-4">
                 <h3 class="text-lg font-bold text-slate-800 flex items-center gap-2">
@@ -668,8 +807,6 @@
                     <i data-lucide="edit-3" class="w-3 h-3 inline"></i> Edit Rincian
                 </button>
             </div>
-
-            <!-- View Mode -->
             <div id="needs-view" class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
                 <table class="w-full text-sm text-left">
                     <thead class="bg-slate-50 text-slate-500 font-semibold">
@@ -682,18 +819,10 @@
                     </thead>
                     <tbody id="needs-body" class="divide-y divide-slate-100"></tbody>
                     <tfoot class="bg-slate-50 font-bold text-slate-700">
-                        <tr>
-                            <td colspan="3" class="p-3 text-right">Total Kebutuhan</td>
-                            <td class="p-3 text-right font-mono text-indigo-700" id="needs-total-footer">Rp 0</td>
-                        </tr>
+                        <tr><td colspan="3" class="p-3 text-right">Total Kebutuhan</td><td class="p-3 text-right font-mono text-indigo-700" id="needs-total-footer">Rp 0</td></tr>
                     </tfoot>
                 </table>
-                <div class="p-3 bg-yellow-50 text-yellow-800 text-xs text-center border-t border-yellow-100 no-print">
-                    *Harga estimasi pasar lokal. Total target donasi otomatis mengikuti rincian ini.
-                </div>
             </div>
-
-            <!-- Edit Mode -->
             <div id="needs-edit" class="hidden bg-slate-50 p-4 rounded-xl border border-indigo-200 no-print">
                 <h4 class="font-bold text-sm mb-3">Edit Daftar Kebutuhan</h4>
                 <div id="needs-edit-container" class="space-y-3"></div>
@@ -713,10 +842,8 @@
                     <input type="file" accept="image/*" class="hidden" onchange="window.handleImageUpload(event)">
                 </label>
             </div>
-            
             <div class="relative group">
                 <div id="gallery-carousel" class="flex overflow-x-auto gap-4 py-2 snap-x scrollbar-hide scroll-smooth"></div>
-                <!-- Nav Arrows (Desktop) -->
                 <button onclick="window.scrollGallery(-1)" class="absolute left-0 top-1/2 -translate-y-1/2 bg-white/80 p-2 rounded-full shadow-lg hover:bg-white hidden md:block no-print"><i data-lucide="chevron-left" class="w-5 h-5"></i></button>
                 <button onclick="window.scrollGallery(1)" class="absolute right-0 top-1/2 -translate-y-1/2 bg-white/80 p-2 rounded-full shadow-lg hover:bg-white hidden md:block no-print"><i data-lucide="chevron-right" class="w-5 h-5"></i></button>
             </div>
@@ -724,40 +851,27 @@
 
         <!-- ACTION SECTIONS -->
         <div class="grid md:grid-cols-2 gap-6 no-print">
-            <!-- MONEY -->
             <div id="donate-money" class="bg-emerald-50 p-6 rounded-xl border-2 border-emerald-200 hover:border-emerald-400 transition shadow-sm group">
-                <div class="bg-emerald-100 w-12 h-12 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition">
-                    <i data-lucide="heart-handshake" class="w-6 h-6 text-emerald-600"></i>
-                </div>
-                <div class="flex justify-between items-start">
-                    <h3 class="text-lg font-bold text-slate-800 mb-1">Donasi Uang</h3>
-                    <span class="bg-emerald-600 text-white text-[10px] px-2 py-1 rounded-full font-bold">JUMAT BERKAH</span>
-                </div>
-                <p class="text-sm text-slate-500 mb-4">Transfer amanah untuk pendidikan & gizi mereka.</p>
+                <div class="bg-emerald-100 w-12 h-12 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition"><i data-lucide="heart-handshake" class="w-6 h-6 text-emerald-600"></i></div>
+                <div class="flex justify-between items-start"><h3 class="text-lg font-bold text-slate-800 mb-1">Donasi Uang</h3><span class="bg-emerald-600 text-white text-[10px] px-2 py-1 rounded-full font-bold">JUMAT BERKAH & SANITASI</span></div>
+                <p class="text-sm text-slate-500 mb-4">Transfer amanah untuk semua program.</p>
                 <div class="bg-white p-3 rounded-lg mb-4 text-center border border-emerald-100">
                     <div class="text-xs text-slate-400 uppercase font-bold">Bank BRI</div>
                     <div class="text-xl font-mono font-bold text-slate-800 tracking-wider">2200 0100 0302 301</div>
                     <div class="text-xs text-slate-500 mt-1">an Yayasan Cakrawala Peduli Indonesia</div>
                     <button onclick="window.copyRek()" class="text-xs text-emerald-600 font-bold mt-2 hover:underline flex items-center justify-center gap-1 w-full"><i data-lucide="copy" class="w-3 h-3"></i> Salin Nomor</button>
                 </div>
-                <a href="https://wa.me/6281392047146?text=Halo,%20saya%20ingin%20konfirmasi%20donasi%20Jumat%20Berkah%20ke%20BRI%20sebesar:" target="_blank" class="block w-full bg-emerald-600 hover:bg-emerald-700 text-white text-center py-3 rounded-lg font-bold text-sm transition no-print">Konfirmasi Transfer</a>
+                <a href="https://wa.me/6281392047146?text=Halo,%20saya%20ingin%20konfirmasi%20donasi%20untuk%20program%20bantuan%20Sawang%20(Air/Pendidikan/Gizi):" target="_blank" class="block w-full bg-emerald-600 hover:bg-emerald-700 text-white text-center py-3 rounded-lg font-bold text-sm transition no-print">Konfirmasi Transfer</a>
             </div>
-
-            <!-- GOODS -->
             <div id="donate-goods" class="bg-white p-6 rounded-xl border-2 border-blue-100 hover:border-blue-300 transition shadow-sm group">
-                <div class="bg-blue-100 w-12 h-12 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition">
-                    <i data-lucide="package" class="w-6 h-6 text-blue-600"></i>
-                </div>
+                <div class="bg-blue-100 w-12 h-12 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition"><i data-lucide="package" class="w-6 h-6 text-blue-600"></i></div>
                 <h3 class="text-lg font-bold text-slate-800 mb-2">Opsi B: Kirim Barang</h3>
-                <p class="text-sm text-slate-500 mb-4">Punya seragam layak pakai atau baru? Kirimkan langsung.</p>
+                <p class="text-sm text-slate-500 mb-4">Punya seragam layak pakai atau material?</p>
                 <div class="bg-slate-50 p-3 rounded-lg mb-4">
                     <div class="text-[10px] text-slate-400 uppercase font-bold mb-1">Alamat Posko:</div>
-                    <p class="text-xs text-slate-700 leading-relaxed font-medium">
-                        Prodi Sosiologi FISIP USK<br>
-                        Jl. Tgk Tanoh Abee No. 4, Kopelma Darussalam, Banda Aceh, 23115.
-                    </p>
+                    <p class="text-xs text-slate-700 leading-relaxed font-medium">Prodi Sosiologi FISIP USK<br>Jl. Tgk Tanoh Abee No. 4, Kopelma Darussalam, Banda Aceh, 23115.</p>
                 </div>
-                <a href="https://wa.me/6281392047146?text=Halo,%20saya%20ingin%20mengirimkan%20paket%20seragam%20sekolah." target="_blank" class="block w-full bg-white border-2 border-blue-600 text-blue-600 hover:bg-blue-50 text-center py-3 rounded-lg font-bold text-sm transition no-print">Konfirmasi Pengiriman</a>
+                <a href="https://wa.me/6281392047146?text=Halo,%20saya%20ingin%20mengirimkan%20barang/material%20untuk%20bantuan." target="_blank" class="block w-full bg-white border-2 border-blue-600 text-blue-600 hover:bg-blue-50 text-center py-3 rounded-lg font-bold text-sm transition no-print">Konfirmasi Pengiriman</a>
             </div>
         </div>
 
@@ -768,96 +882,83 @@
                 <form onsubmit="window.submitSupport(event)" class="mb-6 flex gap-2 no-print">
                     <input type="text" id="donor-name" placeholder="Nama" class="w-1/3 border p-2 rounded text-sm bg-slate-50">
                     <input type="text" id="donor-msg" placeholder="Pesan semangat..." class="flex-grow border p-2 rounded text-sm bg-slate-50">
-                    <select id="donor-type" class="border p-2 rounded text-sm bg-slate-50">
-                        <option value="info">Pesan</option><option value="money">Uang</option><option value="goods">Barang</option>
-                    </select>
+                    <select id="donor-type" class="border p-2 rounded text-sm bg-slate-50"><option value="info">Pesan</option><option value="money">Uang</option><option value="goods">Barang</option></select>
                     <button class="bg-slate-800 text-white p-2 rounded hover:bg-black"><i data-lucide="send" class="w-4 h-4"></i></button>
                 </form>
                 <div id="donor-feed" class="space-y-3 max-h-80 overflow-y-auto pr-2"></div>
             </div>
         </section>
-
     </main>
 
     <!-- FLOATING BOTTOM BAR -->
     <div class="fixed bottom-0 left-0 w-full bg-white border-t p-3 z-50 no-print shadow-[0_-5px_15px_rgba(0,0,0,0.1)]">
         <div class="flex justify-between items-center max-w-4xl mx-auto">
-            <!-- Connection Status -->
-            <div id="connection-status" class="flex items-center gap-2 text-xs">
-                 <span class="w-2 h-2 rounded-full bg-slate-300"></span> <span class="text-slate-400">Memuat...</span>
-            </div>
-            
+            <div id="connection-status" class="flex items-center gap-2 text-xs"><span class="w-2 h-2 rounded-full bg-slate-300"></span> <span class="text-slate-400">Memuat...</span></div>
             <div class="flex gap-2">
-                <button onclick="window.shareSocial('wa')" class="bg-green-500 hover:bg-green-600 text-white px-3 py-2 rounded-lg font-bold text-xs flex items-center gap-1">
-                    <i data-lucide="message-circle" class="w-3 h-3"></i> WA
-                </button>
-                <button onclick="window.print()" class="bg-slate-800 hover:bg-slate-900 text-white px-3 py-2 rounded-lg font-bold text-xs flex items-center gap-1">
-                    <i data-lucide="printer" class="w-3 h-3"></i> Print
-                </button>
+                <button onclick="window.shareSocial('wa')" class="bg-green-500 hover:bg-green-600 text-white px-3 py-2 rounded-lg font-bold text-xs flex items-center gap-1"><i data-lucide="message-circle" class="w-3 h-3"></i> WA</button>
+                <button onclick="window.print()" class="bg-slate-800 hover:bg-slate-900 text-white px-3 py-2 rounded-lg font-bold text-xs flex items-center gap-1"><i data-lucide="printer" class="w-3 h-3"></i> Print</button>
             </div>
         </div>
     </div>
     <div class="h-16"></div>
 
-    <!-- MODAL CAPTION -->
+    <!-- MODALS -->
     <div id="caption-modal" class="hidden fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
         <div class="bg-white p-6 rounded-lg w-full max-w-sm shadow-2xl">
             <h4 class="font-bold mb-2">Keterangan Foto</h4>
             <input type="text" id="temp-caption" class="w-full border p-2 rounded mb-4 text-sm">
             <div class="flex justify-end gap-2">
                 <button onclick="window.cancelUpload()" class="px-4 py-2 text-sm text-slate-500 hover:text-slate-800" id="btn-cancel-upload">Batal</button>
-                <button onclick="window.confirmUpload()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm font-bold transition flex items-center gap-2" id="btn-confirm-upload">
-                    <span>Upload</span>
-                </button>
+                <button onclick="window.confirmUpload()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm font-bold transition flex items-center gap-2" id="btn-confirm-upload"><span>Upload</span></button>
             </div>
         </div>
     </div>
 
-    <!-- LIGHTBOX MODAL (POP-UP GAMBAR FULLSCREEN) -->
     <div id="lightbox-modal" class="hidden fixed inset-0 z-[70] bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm transition-opacity duration-300">
-        <!-- Close Button (Absolute Top Right) -->
-        <button onclick="window.closeLightbox()" class="absolute top-4 right-4 bg-white/10 hover:bg-white/20 text-white p-2 rounded-full transition z-[80]">
-            <i data-lucide="x" class="w-8 h-8"></i>
-        </button>
-
-        <!-- Image Container -->
+        <button onclick="window.closeLightbox()" class="absolute top-4 right-4 bg-white/10 hover:bg-white/20 text-white p-2 rounded-full transition z-[80]"><i data-lucide="x" class="w-8 h-8"></i></button>
         <div class="relative max-w-4xl max-h-full w-full flex flex-col items-center justify-center">
             <img id="lightbox-img" src="" class="max-h-[85vh] max-w-full object-contain rounded-lg shadow-2xl border-2 border-white/10">
             <p id="lightbox-caption" class="text-white text-center mt-4 text-lg font-medium drop-shadow-md bg-black/50 px-4 py-2 rounded-full"></p>
         </div>
-        
-        <!-- Click outside to close -->
         <div class="absolute inset-0 -z-10" onclick="window.closeLightbox()"></div>
     </div>
 
-    <!-- ADMIN MODAL -->
+    <!-- ADMIN MODAL (UPDATED FOR FINANCE & CORRECTIONS) -->
     <div id="admin-modal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-        <div class="bg-white p-6 rounded-xl w-full max-w-xs shadow-2xl">
-            <h4 class="font-bold mb-4 border-b pb-2">Update Manual (Admin)</h4>
+        <div class="bg-white p-6 rounded-xl w-full max-w-sm shadow-2xl">
+            <h4 class="font-bold mb-4 border-b pb-2 flex items-center gap-2"><i data-lucide="user-cog" class="w-5 h-5"></i> Input Admin</h4>
+            
             <div class="mb-4">
-                <label class="text-xs font-bold block mb-1">Tambah Uang (Rp)</label>
-                <input type="number" id="admin-add-money" class="w-full border p-2 rounded" placeholder="Contoh: 100000">
-                <button onclick="window.adminUpdate('money')" class="w-full bg-green-100 text-green-700 font-bold mt-2 py-1 rounded text-xs hover:bg-green-200">+ Input Uang</button>
+                <label class="text-xs font-bold block mb-1 text-slate-600">Jenis Transaksi</label>
+                <select id="trans-type" class="w-full border p-2 rounded text-sm mb-3">
+                    <option value="in">💰 Pemasukan (Donasi Uang)</option>
+                    <option value="out">💸 Pengeluaran (Belanja/Biaya)</option>
+                    <option value="goods">📦 Pemasukan Barang (Pcs)</option>
+                    <option value="set_money">🔧 Koreksi Saldo (Set Manual)</option>
+                    <option value="set_target">🎯 Ubah Target Dana</option>
+                </select>
+
+                <label class="text-xs font-bold block mb-1 text-slate-600">Jumlah (Rp / Pcs)</label>
+                <input type="number" id="trans-amount" class="w-full border p-2 rounded text-sm mb-3" placeholder="Contoh: 100000">
+
+                <label class="text-xs font-bold block mb-1 text-slate-600">Keterangan / Dari Siapa</label>
+                <textarea id="trans-desc" class="w-full border p-2 rounded text-sm mb-4" rows="2" placeholder="Contoh: Hamba Allah atau Beli Semen 5 Sak"></textarea>
+
+                <button onclick="window.handleTransaction()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 rounded text-sm flex items-center justify-center gap-2">
+                    <i data-lucide="save" class="w-4 h-4"></i> Simpan Transaksi
+                </button>
             </div>
-            <div class="mb-4">
-                <label class="text-xs font-bold block mb-1">Tambah Barang (Pcs)</label>
-                <input type="number" id="admin-add-item" class="w-full border p-2 rounded" placeholder="Contoh: 5">
-                <button onclick="window.adminUpdate('goods')" class="w-full bg-blue-100 text-blue-700 font-bold mt-2 py-1 rounded text-xs hover:bg-blue-200">+ Input Barang</button>
-            </div>
-            <button onclick="window.toggleAdminPanel()" class="w-full border py-2 rounded text-xs text-slate-500">Tutup</button>
+            
+            <button onclick="window.toggleAdminPanel()" class="w-full border py-2 rounded text-xs text-slate-500 hover:bg-slate-50">Tutup</button>
         </div>
     </div>
 
-    <!-- FOOTER -->
     <footer class="bg-slate-900 text-slate-400 py-8 text-center border-t border-slate-800 mt-auto text-xs">
-        <p>&copy; 2026 Yayasan Cakrawala Peduli Indonesia. Program Bantuan Krueng Mane.</p>
+        <p>&copy; 2026 Yayasan Cakrawala Peduli Indonesia.</p>
     </footer>
 
-    <!-- Init Icon (Backup) -->
     <script>
-        document.addEventListener('DOMContentLoaded', () => {
-            if (typeof lucide !== 'undefined') lucide.createIcons();
-        });
+        document.addEventListener('DOMContentLoaded', () => { if (typeof lucide !== 'undefined') lucide.createIcons(); });
     </script>
 </body>
 </html>
