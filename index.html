@@ -8,6 +8,9 @@
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     
+    <!-- html2pdf -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+
     <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
 
@@ -54,35 +57,41 @@
         window.cetakLaporan = () => {
             const gallery = document.getElementById('gallery-carousel');
             const items = document.querySelectorAll('.gallery-item');
+            const noPrintEls = document.querySelectorAll('.no-print');
             
-            // 1. Matikan fitur gulir menyamping sementara
+            noPrintEls.forEach(el => el.style.display = 'none');
+            
             if (gallery) {
                 gallery.classList.remove('overflow-x-auto', 'snap-x');
                 gallery.classList.add('flex-wrap', 'justify-center');
             }
             
-            // 2. Paksa ukuran wadah gambar penuh ke bawah
             items.forEach(item => {
                 item.classList.remove('min-w-[280px]', 'md:min-w-[350px]');
                 item.classList.add('w-full', 'mb-6');
             });
 
-            // 3. Jeda untuk membiarkan browser menyusun ulang gambar
-            setTimeout(() => {
-                window.print();
+            const element = document.body;
+            const opt = {
+                margin:       [10, 10, 10, 10],
+                filename:     'Laporan_Bantuan_CPI.pdf',
+                image:        { type: 'jpeg', quality: 0.98 },
+                html2canvas:  { scale: 2, useCORS: true },
+                jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
+            };
+
+            html2pdf().set(opt).from(element).save().then(() => {
+                noPrintEls.forEach(el => el.style.display = '');
                 
-                // 4. Kembalikan tampilan galeri seperti semula setelah perintah cetak selesai
-                setTimeout(() => {
-                    if (gallery) {
-                        gallery.classList.add('overflow-x-auto', 'snap-x');
-                        gallery.classList.remove('flex-wrap', 'justify-center');
-                    }
-                    items.forEach(item => {
-                        item.classList.add('min-w-[280px]', 'md:min-w-[350px]');
-                        item.classList.remove('w-full', 'mb-6');
-                    });
-                }, 1000);
-            }, 1000);
+                if (gallery) {
+                    gallery.classList.add('overflow-x-auto', 'snap-x');
+                    gallery.classList.remove('flex-wrap', 'justify-center');
+                }
+                items.forEach(item => {
+                    item.classList.add('min-w-[280px]', 'md:min-w-[350px]');
+                    item.classList.remove('w-full', 'mb-6');
+                });
+            });
         }
 
         // --- UPDATE KEUANGAN ADMIN ---
@@ -446,7 +455,7 @@
             const errorImg = "https://placehold.co/400x300/e2e8f0/64748b?text=Foto+Tidak+Tersedia";
             container.innerHTML = gallery.map(photo => `
                 <div class="gallery-item min-w-[280px] md:min-w-[350px] print:w-full print:min-w-0 print:mb-4 aspect-video relative rounded-lg overflow-hidden snap-center border bg-slate-200 break-inside-avoid">
-                    <img src="${photo.url}" class="w-full h-full object-cover cursor-zoom-in hover:scale-105 transition duration-300" 
+                    <img src="${photo.url}" crossorigin="anonymous" class="w-full h-full object-cover cursor-zoom-in hover:scale-105 transition duration-300" 
                          onclick="window.openLightbox('${photo.url}', '${photo.caption}')"
                          onerror="this.onerror=null;this.src='${errorImg}'">
                     <div class="gallery-caption absolute inset-0 bg-gradient-to-t from-black/80 via-transparent flex flex-col justify-end p-3 pointer-events-none">
