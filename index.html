@@ -52,10 +52,37 @@
 
         // --- FUNGSI CETAK DENGAN JEDA ---
         window.cetakLaporan = () => {
-            // Anda bisa mengubah angka 800 menjadi angka yang lebih besar (misal 1500) jika butuh jeda lebih lama
+            const gallery = document.getElementById('gallery-carousel');
+            const items = document.querySelectorAll('.gallery-item');
+            
+            // 1. Matikan fitur gulir menyamping sementara
+            if (gallery) {
+                gallery.classList.remove('overflow-x-auto', 'snap-x');
+                gallery.classList.add('flex-wrap', 'justify-center');
+            }
+            
+            // 2. Paksa ukuran wadah gambar penuh ke bawah
+            items.forEach(item => {
+                item.classList.remove('min-w-[280px]', 'md:min-w-[350px]');
+                item.classList.add('w-full', 'mb-6');
+            });
+
+            // 3. Jeda untuk membiarkan browser menyusun ulang gambar
             setTimeout(() => {
                 window.print();
-            }, 1500);
+                
+                // 4. Kembalikan tampilan galeri seperti semula setelah perintah cetak selesai
+                setTimeout(() => {
+                    if (gallery) {
+                        gallery.classList.add('overflow-x-auto', 'snap-x');
+                        gallery.classList.remove('flex-wrap', 'justify-center');
+                    }
+                    items.forEach(item => {
+                        item.classList.add('min-w-[280px]', 'md:min-w-[350px]');
+                        item.classList.remove('w-full', 'mb-6');
+                    });
+                }, 1000);
+            }, 1000);
         }
 
         // --- UPDATE KEUANGAN ADMIN ---
